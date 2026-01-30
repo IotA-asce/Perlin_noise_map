@@ -540,9 +540,13 @@ if page == "Explore":
     with tab2d:
         st.subheader("2D Noise Map")
         st.caption(f"min={zmin:.4f}, max={zmax:.4f}")
-        st.plotly_chart(_heatmap(z01, colorscale=str(colorscale)), width="stretch")
+        st.plotly_chart(
+            _heatmap(z01, colorscale=str(colorscale)),
+            width="stretch",
+            key="explore_heatmap",
+        )
         if show_hist:
-            st.plotly_chart(_histogram(z01), width="stretch")
+            st.plotly_chart(_histogram(z01), width="stretch", key="explore_hist")
 
         with st.expander("Compare: Perlin vs Value noise"):
             perlin_z = _noise_map(
@@ -590,12 +594,14 @@ if page == "Explore":
                 st.plotly_chart(
                     _heatmap(perlin_z, colorscale=str(colorscale)),
                     width="stretch",
+                    key="compare_perlin_heatmap",
                 )
             with col1:
                 st.markdown("**Value noise**")
                 st.plotly_chart(
                     _heatmap(value_z, colorscale=str(colorscale)),
                     width="stretch",
+                    key="compare_value_heatmap",
                 )
 
         if str(basis) == "perlin":
@@ -650,12 +656,14 @@ if page == "Explore":
                     st.plotly_chart(
                         _heatmap(diag8_z, colorscale=str(colorscale)),
                         width="stretch",
+                        key="gradset_diag8_heatmap",
                     )
                 with col1:
                     st.markdown("**axis4**")
                     st.plotly_chart(
                         _heatmap(axis4_z, colorscale=str(colorscale)),
                         width="stretch",
+                        key="gradset_axis4_heatmap",
                     )
 
         if str(noise_variant) == "domain_warp":
@@ -692,12 +700,14 @@ if page == "Explore":
                     st.plotly_chart(
                         _heatmap(base_z, colorscale=str(colorscale)),
                         width="stretch",
+                        key="domainwarp_base_heatmap",
                     )
                 with col1:
                     st.markdown("**Warped**")
                     st.plotly_chart(
                         _heatmap(z01, colorscale=str(colorscale)),
                         width="stretch",
+                        key="domainwarp_warped_heatmap",
                     )
 
         with st.expander("Export"):
@@ -775,6 +785,7 @@ if page == "Explore":
                 surfacecolor=surfacecolor,
             ),
             width="stretch",
+            key="explore_surface",
         )
 
         with st.expander("Export 3D"):
@@ -809,17 +820,23 @@ else:
     col_a, col_b = st.columns(2)
     with col_a:
         st.markdown("**Cell + gradients**")
-        st.plotly_chart(perlin2d_cell_figure(debug), width="stretch")
+        st.plotly_chart(
+            perlin2d_cell_figure(debug),
+            width="stretch",
+            key="learn_cell",
+        )
 
     with col_b:
         st.markdown("**Fade curves**")
         st.plotly_chart(
             fade_curve_figure(t_value=float(debug["relative"]["xf"]), title="fade(x)"),
             width="stretch",
+            key="learn_fade_x",
         )
         st.plotly_chart(
             fade_curve_figure(t_value=float(debug["relative"]["yf"]), title="fade(y)"),
             width="stretch",
+            key="learn_fade_y",
         )
 
     st.markdown("**Interpolation values**")
@@ -836,8 +853,10 @@ else:
     st.markdown("**Scanline animator**")
     steps = st.slider("Scan steps", min_value=32, max_value=512, value=256, step=32)
     series = scanline_series_from_debug(debug, steps=int(steps))
-    st.plotly_chart(scanline_figure(series), width="stretch")
-    st.plotly_chart(scanline_dots_figure(series), width="stretch")
+    st.plotly_chart(scanline_figure(series), width="stretch", key="learn_scanline")
+    st.plotly_chart(
+        scanline_dots_figure(series), width="stretch", key="learn_scan_dots"
+    )
 
     with st.expander("Raw debug JSON"):
         st.json(debug)
