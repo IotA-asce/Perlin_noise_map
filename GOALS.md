@@ -42,7 +42,7 @@ Not just "generate noise", but make each mathematical decision visible: gradient
 
 - [x] Interactive controls: seed, frequency/scale, octaves, lacunarity, persistence.
 - [x] Options: normalize vs raw, color maps, histogram of values.
-- [ ] Tileable/seamless mode for texture generation.
+- [x] Tileable/seamless mode for texture generation.
 - [ ] Export: PNG (2D), parameter JSON, and reproducible "share link" state (Streamlit query params).
 
 ### Milestone 4: Real-Time 3D Terrain

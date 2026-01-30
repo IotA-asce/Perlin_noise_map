@@ -6,7 +6,7 @@ import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 
-from perlin.noise_2d import Perlin2D, fbm2
+from perlin.noise_2d import Perlin2D, fbm2, tileable_fbm2
 from viz.step_2d import (
     fade_curve_figure,
     perlin2d_cell_figure,
@@ -35,22 +35,41 @@ def _noise_map(
     offset_x: float,
     offset_y: float,
     normalize: bool,
+    tileable: bool,
 ) -> np.ndarray:
     perlin = Perlin2D(seed=seed)
 
     scale = max(scale, 1e-9)
-    xs = (np.arange(width, dtype=np.float64) / scale) + offset_x
-    ys = (np.arange(height, dtype=np.float64) / scale) + offset_y
+    if tileable:
+        period_x = (float(width) - 1.0) / scale
+        period_y = (float(height) - 1.0) / scale
+        xs = np.linspace(offset_x, offset_x + period_x, width, dtype=np.float64)
+        ys = np.linspace(offset_y, offset_y + period_y, height, dtype=np.float64)
+    else:
+        xs = (np.arange(width, dtype=np.float64) / scale) + offset_x
+        ys = (np.arange(height, dtype=np.float64) / scale) + offset_y
     xg, yg = np.meshgrid(xs, ys)
 
-    z = fbm2(
-        perlin,
-        xg,
-        yg,
-        octaves=octaves,
-        lacunarity=lacunarity,
-        persistence=persistence,
-    )
+    if tileable:
+        z = tileable_fbm2(
+            perlin,
+            xg,
+            yg,
+            period_x=period_x,
+            period_y=period_y,
+            octaves=octaves,
+            lacunarity=lacunarity,
+            persistence=persistence,
+        )
+    else:
+        z = fbm2(
+            perlin,
+            xg,
+            yg,
+            octaves=octaves,
+            lacunarity=lacunarity,
+            persistence=persistence,
+        )
 
     if not normalize:
         return z
@@ -153,6 +172,7 @@ with st.sidebar:
     st.divider()
     st.subheader("Display")
     normalize = st.toggle("Normalize to 0..1", value=True)
+    tileable = st.toggle("Tileable (seamless edges)", value=False)
     colorscale = st.selectbox(
         "Colorscale",
         ["Viridis", "Cividis", "Turbo", "IceFire", "Earth"],
@@ -188,6 +208,7 @@ z01 = _noise_map(
     offset_x=float(offset_x),
     offset_y=float(offset_y),
     normalize=bool(normalize),
+    tileable=bool(tileable),
 )
 
 zmin = float(np.min(z01))

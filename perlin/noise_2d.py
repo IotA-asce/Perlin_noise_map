@@ -138,3 +138,63 @@ def fbm2(
     if amp_sum == 0.0:
         return total
     return total / amp_sum
+
+
+def tileable2d(
+    func,
+    x: np.ndarray,
+    y: np.ndarray,
+    *,
+    period_x: float,
+    period_y: float,
+) -> np.ndarray:
+    """Make an arbitrary 2D noise function tileable with given periods.
+
+    This wraps `func(x, y)` into a periodic function with period `period_x` and
+    `period_y` using a standard 4-sample blend.
+    """
+
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    period_x = float(period_x)
+    period_y = float(period_y)
+    if period_x <= 0.0 or period_y <= 0.0:
+        raise ValueError("period_x and period_y must be > 0")
+
+    x0 = np.mod(x, period_x)
+    y0 = np.mod(y, period_y)
+    sx = x0 / period_x
+    sy = y0 / period_y
+
+    n00 = func(x0, y0)
+    n10 = func(x0 - period_x, y0)
+    n01 = func(x0, y0 - period_y)
+    n11 = func(x0 - period_x, y0 - period_y)
+
+    nx0 = n00 + sx * (n10 - n00)
+    nx1 = n01 + sx * (n11 - n01)
+    return nx0 + sy * (nx1 - nx0)
+
+
+def tileable_fbm2(
+    perlin: Perlin2D,
+    x: np.ndarray,
+    y: np.ndarray,
+    *,
+    period_x: float,
+    period_y: float,
+    octaves: int = 4,
+    lacunarity: float = 2.0,
+    persistence: float = 0.5,
+) -> np.ndarray:
+    def _base(xx: np.ndarray, yy: np.ndarray) -> np.ndarray:
+        return fbm2(
+            perlin,
+            xx,
+            yy,
+            octaves=octaves,
+            lacunarity=lacunarity,
+            persistence=persistence,
+        )
+
+    return tileable2d(_base, x, y, period_x=period_x, period_y=period_y)

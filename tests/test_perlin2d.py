@@ -1,6 +1,6 @@
 import numpy as np
 
-from perlin.noise_2d import Perlin2D, fbm2
+from perlin.noise_2d import Perlin2D, fbm2, tileable_fbm2
 from viz.step_2d import scanline_series_from_debug
 
 
@@ -95,3 +95,46 @@ def test_scanline_series_matches_perlin_noise():
     ys = y_base + y_rel
     expected = p.noise(xs, ys)
     assert np.allclose(series["lerp"]["noise"], expected)
+
+
+def test_tileable_fbm2_periodic_in_x_and_y():
+    p = Perlin2D(seed=0)
+    period_x = 3.25
+    period_y = 4.5
+
+    x = np.array([0.1, 1.25, 10.5], dtype=np.float64)
+    y = np.array([0.2, 2.75, 9.0], dtype=np.float64)
+
+    z0 = tileable_fbm2(
+        p,
+        x,
+        y,
+        period_x=period_x,
+        period_y=period_y,
+        octaves=4,
+        lacunarity=2.0,
+        persistence=0.5,
+    )
+    zx = tileable_fbm2(
+        p,
+        x + period_x,
+        y,
+        period_x=period_x,
+        period_y=period_y,
+        octaves=4,
+        lacunarity=2.0,
+        persistence=0.5,
+    )
+    zy = tileable_fbm2(
+        p,
+        x,
+        y + period_y,
+        period_x=period_x,
+        period_y=period_y,
+        octaves=4,
+        lacunarity=2.0,
+        persistence=0.5,
+    )
+
+    assert np.allclose(z0, zx)
+    assert np.allclose(z0, zy)
