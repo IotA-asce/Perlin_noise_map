@@ -259,6 +259,7 @@ def _heatmap(z: np.ndarray, *, colorscale: str) -> go.Figure:
             z=z,
             colorscale=colorscale,
             showscale=False,
+            hovertemplate="value=%{z:.4f}<extra></extra>",
         )
     )
     fig.update_layout(
@@ -943,7 +944,13 @@ if page == "Explore":
 
     with tab2d:
         st.subheader("2D Noise Map")
-        st.caption(f"min={zmin:.4f}, max={zmax:.4f}")
+        zmean = float(np.mean(z01))
+        zstd = float(np.std(z01))
+        c0, c1, c2, c3 = st.columns(4)
+        c0.metric("min", f"{zmin:.4f}")
+        c1.metric("max", f"{zmax:.4f}")
+        c2.metric("mean", f"{zmean:.4f}")
+        c3.metric("std", f"{zstd:.4f}")
         st.plotly_chart(
             _heatmap(z01, colorscale=str(colorscale)),
             width="stretch",
@@ -1185,6 +1192,15 @@ if page == "Explore":
         st.session_state["perf_3d_ms"] = (t3b - t3a) * 1000.0
         st.session_state["perf_3d_res"] = (int(res3d), int(res3d))
         surfacecolor = _slope01(z3d) if shade_mode == "Slope" else None
+        z3_min = float(np.min(z3d))
+        z3_max = float(np.max(z3d))
+        z3_mean = float(np.mean(z3d))
+        z3_std = float(np.std(z3d))
+        c0, c1, c2, c3 = st.columns(4)
+        c0.metric("min", f"{z3_min:.4f}")
+        c1.metric("max", f"{z3_max:.4f}")
+        c2.metric("mean", f"{z3_mean:.4f}")
+        c3.metric("std", f"{z3_std:.4f}")
         st.plotly_chart(
             _surface(
                 z3d,
