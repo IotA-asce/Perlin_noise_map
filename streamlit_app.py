@@ -131,6 +131,67 @@ default_quality = _qp_get("quality", "Balanced")
 if default_quality not in _QUALITY:
     default_quality = "Balanced"
 
+_PRESETS: dict[str, dict[str, str]] = {
+    "Terrain": {
+        "basis": "perlin",
+        "noise": "ridged",
+        "scale": "180.0",
+        "octaves": "6",
+        "lacunarity": "2.0",
+        "persistence": "0.5",
+        "colorscale": "Earth",
+        "shade": "Slope",
+        "z_scale": "120.0",
+    },
+    "Clouds": {
+        "basis": "perlin",
+        "noise": "fbm",
+        "scale": "320.0",
+        "octaves": "5",
+        "lacunarity": "2.0",
+        "persistence": "0.6",
+        "colorscale": "Cividis",
+        "shade": "Height",
+        "z_scale": "70.0",
+    },
+    "Marble": {
+        "basis": "perlin",
+        "noise": "turbulence",
+        "scale": "90.0",
+        "octaves": "6",
+        "lacunarity": "2.0",
+        "persistence": "0.55",
+        "colorscale": "IceFire",
+        "shade": "Height",
+        "z_scale": "60.0",
+    },
+    "Islands": {
+        "basis": "perlin",
+        "noise": "domain_warp",
+        "warp_amp": "1.8",
+        "warp_scale": "2.0",
+        "warp_octaves": "2",
+        "scale": "260.0",
+        "octaves": "5",
+        "lacunarity": "2.0",
+        "persistence": "0.5",
+        "colorscale": "Earth",
+        "shade": "Height",
+        "z_scale": "85.0",
+    },
+    "Ridged mountains": {
+        "basis": "perlin",
+        "noise": "ridged",
+        "scale": "140.0",
+        "octaves": "7",
+        "lacunarity": "2.0",
+        "persistence": "0.45",
+        "colorscale": "Earth",
+        "shade": "Slope",
+        "z_scale": "150.0",
+    },
+}
+
 default_noise = _qp_get("noise", "fbm")
 if default_noise not in _NOISE_VARIANTS:
     default_noise = "fbm"
@@ -953,6 +1014,26 @@ with st.sidebar:
         _set_query_params(params_for_url)
 
     st.code(f"?{urlencode(params_for_url)}", language="text")
+
+    st.divider()
+    st.subheader("Presets")
+    preset_name = st.selectbox(
+        "Preset",
+        list(_PRESETS.keys()),
+        index=0,
+        label_visibility="collapsed",
+    )
+    if st.button("Apply preset", use_container_width=True):
+        new_params = dict(params_for_url)
+        new_params.update(_PRESETS[str(preset_name)])
+
+        # If we're in Apply mode, reset the stored applied params so the preset
+        # becomes the new baseline on rerun.
+        if update_mode == "Apply":
+            st.session_state.pop("applied_params", None)
+
+        _set_query_params(new_params)
+        st.rerun()
 
 width_render = int(width)
 height_render = int(height)
