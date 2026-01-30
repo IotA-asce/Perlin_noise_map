@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import time
 from urllib.parse import urlencode
 
 import numpy as np
@@ -909,6 +910,7 @@ with st.sidebar:
 
     st.code(f"?{urlencode(params_for_url)}", language="text")
 
+t0 = time.perf_counter()
 z01 = _noise_map(
     seed=int(seed),
     basis=str(basis),
@@ -928,6 +930,9 @@ z01 = _noise_map(
     normalize=bool(normalize),
     tileable=bool(tileable),
 )
+t1 = time.perf_counter()
+st.session_state["perf_2d_ms"] = (t1 - t0) * 1000.0
+st.session_state["perf_2d_res"] = (int(width), int(height))
 
 zmin = float(np.min(z01))
 zmax = float(np.max(z01))
@@ -1156,6 +1161,7 @@ if page == "Explore":
         st.subheader("3D Heightmap")
         st.caption(f"resolution={int(res3d)}x{int(res3d)}")
 
+        t3a = time.perf_counter()
         z3d = _noise_map(
             seed=int(seed),
             basis=str(basis),
@@ -1175,6 +1181,9 @@ if page == "Explore":
             normalize=bool(normalize),
             tileable=bool(tileable),
         )
+        t3b = time.perf_counter()
+        st.session_state["perf_3d_ms"] = (t3b - t3a) * 1000.0
+        st.session_state["perf_3d_res"] = (int(res3d), int(res3d))
         surfacecolor = _slope01(z3d) if shade_mode == "Slope" else None
         st.plotly_chart(
             _surface(
@@ -1259,3 +1268,20 @@ else:
 
     with st.expander("Raw debug JSON"):
         st.json(debug)
+
+
+with st.sidebar:
+    st.divider()
+    st.subheader("Performance")
+    p2 = float(st.session_state.get("perf_2d_ms", 0.0))
+    r2 = st.session_state.get("perf_2d_res", (0, 0))
+    st.write(f"2D compute: {p2:.1f} ms  (res={r2[0]}x{r2[1]})")
+
+    p3 = st.session_state.get("perf_3d_ms")
+    r3 = st.session_state.get("perf_3d_res")
+    if p3 is not None and r3 is not None:
+        p3 = float(p3)
+        st.write(f"3D compute: {p3:.1f} ms  (res={r3[0]}x{r3[1]})")
+
+    fps = 1000.0 / max(p2, 1e-6)
+    st.caption(f"Estimated max refresh: ~{fps:.1f} FPS (2D compute only)")
