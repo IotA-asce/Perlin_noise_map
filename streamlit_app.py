@@ -1125,6 +1125,70 @@ if page == "Explore":
         c1.metric("max", f"{zmax:.4f}")
         c2.metric("mean", f"{zmean:.4f}")
         c3.metric("std", f"{zstd:.4f}")
+
+        nav, mini = st.columns([2, 3], vertical_alignment="top")
+        with nav:
+            st.markdown("**Viewport**")
+            pan_step = st.number_input(
+                "Pan step",
+                min_value=0.1,
+                max_value=20.0,
+                value=1.0,
+                step=0.1,
+                key="pan_step",
+            )
+            r0, r1, r2, r3 = st.columns(4)
+            if r0.button("Left", use_container_width=True, key="pan_left"):
+                params_for_url["offset_x"] = str(float(offset_x) - float(pan_step))
+                if update_mode == "Apply":
+                    st.session_state.pop("applied_params", None)
+                _set_query_params(params_for_url)
+                st.rerun()
+            if r1.button("Right", use_container_width=True, key="pan_right"):
+                params_for_url["offset_x"] = str(float(offset_x) + float(pan_step))
+                if update_mode == "Apply":
+                    st.session_state.pop("applied_params", None)
+                _set_query_params(params_for_url)
+                st.rerun()
+            if r2.button("Up", use_container_width=True, key="pan_up"):
+                params_for_url["offset_y"] = str(float(offset_y) - float(pan_step))
+                if update_mode == "Apply":
+                    st.session_state.pop("applied_params", None)
+                _set_query_params(params_for_url)
+                st.rerun()
+            if r3.button("Down", use_container_width=True, key="pan_down"):
+                params_for_url["offset_y"] = str(float(offset_y) + float(pan_step))
+                if update_mode == "Apply":
+                    st.session_state.pop("applied_params", None)
+                _set_query_params(params_for_url)
+                st.rerun()
+
+        with mini:
+            st.markdown("**Minimap**")
+            zmini = _noise_map(
+                seed=int(seed),
+                basis=str(basis),
+                grad_set=str(grad2),
+                width=160,
+                height=160,
+                scale=float(scale),
+                octaves=int(octaves),
+                lacunarity=float(lacunarity),
+                persistence=float(persistence),
+                variant=str(noise_variant),
+                warp_amp=float(warp_amp),
+                warp_scale=float(warp_scale),
+                warp_octaves=int(warp_octaves),
+                offset_x=float(offset_x),
+                offset_y=float(offset_y),
+                normalize=True,
+                tileable=bool(tileable),
+            )
+            st.plotly_chart(
+                _heatmap(zmini, colorscale=str(colorscale), show_colorbar=False),
+                width="stretch",
+                key="minimap",
+            )
         st.plotly_chart(
             _heatmap(z01, colorscale=str(colorscale), show_colorbar=show_colorbar),
             width="stretch",
