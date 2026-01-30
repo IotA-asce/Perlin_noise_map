@@ -118,6 +118,7 @@ default_res3d = _qp_int("res3d", 128, min_value=64, max_value=256)
 default_normalize = _qp_bool("normalize", True)
 default_tileable = _qp_bool("tileable", False)
 default_show_hist = _qp_bool("show_hist", False)
+default_show_colorbar = _qp_bool("show_colorbar", False)
 default_live_drag = _qp_bool("live_drag", True)
 default_throttle_ms = _qp_int("throttle_ms", 50, min_value=10, max_value=250)
 
@@ -253,13 +254,14 @@ def _noise_map(
     return (z - zmin) / (zmax - zmin)
 
 
-def _heatmap(z: np.ndarray, *, colorscale: str) -> go.Figure:
+def _heatmap(z: np.ndarray, *, colorscale: str, show_colorbar: bool) -> go.Figure:
     fig = go.Figure(
         data=go.Heatmap(
             z=z,
             colorscale=colorscale,
-            showscale=False,
+            showscale=bool(show_colorbar),
             hovertemplate="value=%{z:.4f}<extra></extra>",
+            colorbar=dict(thickness=12),
         )
     )
     fig.update_layout(
@@ -431,6 +433,7 @@ with st.sidebar:
         "normalize": bool(default_normalize),
         "tileable": bool(default_tileable),
         "colorscale": str(default_colorscale),
+        "show_colorbar": bool(default_show_colorbar),
         "show_hist": bool(default_show_hist),
     }
 
@@ -536,6 +539,10 @@ with st.sidebar:
                 _COLOR_SCALES,
                 index=_COLOR_SCALES.index(str(applied["colorscale"])),
             )
+            show_colorbar = st.toggle(
+                "Show colorbar",
+                value=bool(applied.get("show_colorbar", default_show_colorbar)),
+            )
             show_hist = st.toggle("Show histogram", value=bool(applied["show_hist"]))
 
             st.divider()
@@ -621,6 +628,7 @@ with st.sidebar:
                 "normalize": bool(normalize),
                 "tileable": bool(tileable),
                 "colorscale": str(colorscale),
+                "show_colorbar": bool(show_colorbar),
                 "show_hist": bool(show_hist),
             }
 
@@ -745,6 +753,10 @@ with st.sidebar:
             _COLOR_SCALES,
             index=_COLOR_SCALES.index(default_colorscale),
         )
+        show_colorbar = st.toggle(
+            "Show colorbar",
+            value=bool(default_show_colorbar),
+        )
         show_hist = st.toggle("Show histogram", value=bool(default_show_hist))
 
         st.divider()
@@ -848,6 +860,7 @@ with st.sidebar:
             "normalize": bool(normalize),
             "tileable": bool(tileable),
             "colorscale": str(colorscale),
+            "show_colorbar": bool(show_colorbar),
             "show_hist": bool(show_hist),
         }
 
@@ -874,6 +887,7 @@ with st.sidebar:
     tileable = bool(params["tileable"])
     colorscale = str(params["colorscale"])
     show_hist = bool(params["show_hist"])
+    show_colorbar = bool(params.get("show_colorbar", default_show_colorbar))
     live_drag = bool(params.get("live_drag", False))
     throttle_ms = int(params.get("throttle_ms", 60))
 
@@ -904,6 +918,7 @@ with st.sidebar:
         "normalize": "1" if bool(normalize) else "0",
         "tileable": "1" if bool(tileable) else "0",
         "colorscale": str(colorscale),
+        "show_colorbar": "1" if bool(show_colorbar) else "0",
         "show_hist": "1" if bool(show_hist) else "0",
     }
     if st.button("Update URL with current settings"):
@@ -952,10 +967,16 @@ if page == "Explore":
         c2.metric("mean", f"{zmean:.4f}")
         c3.metric("std", f"{zstd:.4f}")
         st.plotly_chart(
-            _heatmap(z01, colorscale=str(colorscale)),
+            _heatmap(z01, colorscale=str(colorscale), show_colorbar=show_colorbar),
             width="stretch",
             key="explore_heatmap",
         )
+
+        with st.expander("Value probe"):
+            ix = st.slider("x index", 0, max(int(width) - 1, 0), 0, key="probe_x")
+            iy = st.slider("y index", 0, max(int(height) - 1, 0), 0, key="probe_y")
+            v = float(z01[int(iy), int(ix)])
+            st.metric("value", f"{v:.6f}")
         if show_hist:
             st.plotly_chart(_histogram(z01), width="stretch", key="explore_hist")
 
@@ -1003,14 +1024,14 @@ if page == "Explore":
             with col0:
                 st.markdown("**Perlin (gradient)**")
                 st.plotly_chart(
-                    _heatmap(perlin_z, colorscale=str(colorscale)),
+                    _heatmap(perlin_z, colorscale=str(colorscale), show_colorbar=False),
                     width="stretch",
                     key="compare_perlin_heatmap",
                 )
             with col1:
                 st.markdown("**Value noise**")
                 st.plotly_chart(
-                    _heatmap(value_z, colorscale=str(colorscale)),
+                    _heatmap(value_z, colorscale=str(colorscale), show_colorbar=False),
                     width="stretch",
                     key="compare_value_heatmap",
                 )
@@ -1065,14 +1086,22 @@ if page == "Explore":
                 with col0:
                     st.markdown("**diag8**")
                     st.plotly_chart(
-                        _heatmap(diag8_z, colorscale=str(colorscale)),
+                        _heatmap(
+                            diag8_z,
+                            colorscale=str(colorscale),
+                            show_colorbar=False,
+                        ),
                         width="stretch",
                         key="gradset_diag8_heatmap",
                     )
                 with col1:
                     st.markdown("**axis4**")
                     st.plotly_chart(
-                        _heatmap(axis4_z, colorscale=str(colorscale)),
+                        _heatmap(
+                            axis4_z,
+                            colorscale=str(colorscale),
+                            show_colorbar=False,
+                        ),
                         width="stretch",
                         key="gradset_axis4_heatmap",
                     )
@@ -1109,14 +1138,16 @@ if page == "Explore":
                 with col0:
                     st.markdown("**Base (fBm)**")
                     st.plotly_chart(
-                        _heatmap(base_z, colorscale=str(colorscale)),
+                        _heatmap(
+                            base_z, colorscale=str(colorscale), show_colorbar=False
+                        ),
                         width="stretch",
                         key="domainwarp_base_heatmap",
                     )
                 with col1:
                     st.markdown("**Warped**")
                     st.plotly_chart(
-                        _heatmap(z01, colorscale=str(colorscale)),
+                        _heatmap(z01, colorscale=str(colorscale), show_colorbar=False),
                         width="stretch",
                         key="domainwarp_warped_heatmap",
                     )
@@ -1142,6 +1173,7 @@ if page == "Explore":
                 "normalize": bool(normalize),
                 "tileable": bool(tileable),
                 "colorscale": str(colorscale),
+                "show_colorbar": bool(show_colorbar),
                 "show_hist": bool(show_hist),
                 "res3d": int(res3d),
                 "shade": str(shade_mode),

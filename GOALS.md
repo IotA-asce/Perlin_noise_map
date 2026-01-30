@@ -68,7 +68,7 @@ Not just "generate noise", but make each mathematical decision visible: gradient
 - [x] Add a performance HUD: last render time, cache hits, resolution, and estimated FPS.
 - [x] Add responsive layout rules for mobile/tablet (stacking, smaller charts, collapsible panels).
 - [x] Improve chart framing: titles, legends, axis hiding, consistent margins, and value readouts.
-- [ ] Add a colorbar + value probe (hover shows value, min/max/mean shown persistently).
+- [x] Add a colorbar + value probe (hover shows value, min/max/mean shown persistently).
 - [ ] Add tasteful motion: initial load reveal, subtle transitions for chart updates, no jitter.
 - [ ] Add presets: "Terrain", "Marble", "Clouds", "Islands", "Ridged mountains", etc.
 - [ ] Add parameter bookmarking in-session (save/restore snapshots) beyond URL query params.
