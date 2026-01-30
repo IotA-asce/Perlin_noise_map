@@ -332,8 +332,54 @@ def _histogram(z: np.ndarray) -> go.Figure:
     return fig
 
 
-st.title("Perlin Noise Map")
-st.caption("Interactive Perlin noise explorer (2D + 3D) with a learning-first focus.")
+header = st.container()
+with header:
+    left, right = st.columns([5, 2], vertical_alignment="center")
+    with left:
+        st.markdown(
+            """
+            <div class="pn-header">
+              <div class="pn-title">Perlin Noise Map</div>
+              <div class="pn-subtitle">
+                Interactive Perlin/noise lab: explore, compare,
+                and inspect intermediate steps.
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with right:
+        if st.button("Randomize seed", use_container_width=True):
+            st.query_params["seed"] = str(
+                np.random.default_rng().integers(0, 2**31 - 1)
+            )
+            st.rerun()
+        if st.button("Reset view", use_container_width=True):
+            _set_query_params(
+                {
+                    "page": "Explore",
+                    "basis": "perlin",
+                    "grad2": "diag8",
+                    "noise": "fbm",
+                    "seed": "0",
+                    "scale": "120.0",
+                    "octaves": "4",
+                    "lacunarity": "2.0",
+                    "persistence": "0.5",
+                    "width": "256",
+                    "height": "256",
+                    "offset_x": "0.0",
+                    "offset_y": "0.0",
+                    "z_scale": "80.0",
+                    "res3d": "128",
+                    "shade": "Height",
+                    "normalize": "1",
+                    "tileable": "0",
+                    "colorscale": "Viridis",
+                    "show_hist": "0",
+                }
+            )
+            st.rerun()
 
 
 with st.sidebar:

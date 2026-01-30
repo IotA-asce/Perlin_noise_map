@@ -58,6 +58,37 @@ details {
 details summary {
   padding: 0.35rem 0.75rem !important;
 }
+
+/* Header */
+.pn-header {
+  border: 1px solid rgba(17, 24, 39, 0.10);
+  background: rgba(255, 255, 255, 0.65);
+  border-radius: 16px;
+  padding: 0.85rem 1rem;
+  backdrop-filter: blur(8px);
+}
+
+.pn-title {
+  font-size: 1.4rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.pn-subtitle {
+  margin: 0.1rem 0 0;
+  opacity: 0.75;
+}
+
+/* Make sidebar feel tighter */
+[data-testid="stSidebar"] {
+  width: 320px;
+}
+
+@media (max-width: 900px) {
+  [data-testid="stSidebar"] {
+    width: 260px;
+  }
+}
 """
 
 
