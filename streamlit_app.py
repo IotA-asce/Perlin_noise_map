@@ -336,7 +336,7 @@ st.caption("Interactive Perlin noise explorer (2D + 3D) with a learning-first fo
 with st.sidebar:
     st.header("Navigation")
     page = st.radio(
-        "",
+        "Page",
         ["Explore", "Learn"],
         index=0 if default_page == "Explore" else 1,
         label_visibility="collapsed",
@@ -540,11 +540,9 @@ if page == "Explore":
     with tab2d:
         st.subheader("2D Noise Map")
         st.caption(f"min={zmin:.4f}, max={zmax:.4f}")
-        st.plotly_chart(
-            _heatmap(z01, colorscale=str(colorscale)), use_container_width=True
-        )
+        st.plotly_chart(_heatmap(z01, colorscale=str(colorscale)), width="stretch")
         if show_hist:
-            st.plotly_chart(_histogram(z01), use_container_width=True)
+            st.plotly_chart(_histogram(z01), width="stretch")
 
         with st.expander("Compare: Perlin vs Value noise"):
             perlin_z = _noise_map(
@@ -591,13 +589,13 @@ if page == "Explore":
                 st.markdown("**Perlin (gradient)**")
                 st.plotly_chart(
                     _heatmap(perlin_z, colorscale=str(colorscale)),
-                    use_container_width=True,
+                    width="stretch",
                 )
             with col1:
                 st.markdown("**Value noise**")
                 st.plotly_chart(
                     _heatmap(value_z, colorscale=str(colorscale)),
-                    use_container_width=True,
+                    width="stretch",
                 )
 
         if str(basis) == "perlin":
@@ -651,13 +649,13 @@ if page == "Explore":
                     st.markdown("**diag8**")
                     st.plotly_chart(
                         _heatmap(diag8_z, colorscale=str(colorscale)),
-                        use_container_width=True,
+                        width="stretch",
                     )
                 with col1:
                     st.markdown("**axis4**")
                     st.plotly_chart(
                         _heatmap(axis4_z, colorscale=str(colorscale)),
-                        use_container_width=True,
+                        width="stretch",
                     )
 
         if str(noise_variant) == "domain_warp":
@@ -693,13 +691,13 @@ if page == "Explore":
                     st.markdown("**Base (fBm)**")
                     st.plotly_chart(
                         _heatmap(base_z, colorscale=str(colorscale)),
-                        use_container_width=True,
+                        width="stretch",
                     )
                 with col1:
                     st.markdown("**Warped**")
                     st.plotly_chart(
                         _heatmap(z01, colorscale=str(colorscale)),
-                        use_container_width=True,
+                        width="stretch",
                     )
 
         with st.expander("Export"):
@@ -776,7 +774,7 @@ if page == "Explore":
                 colorscale=str(colorscale),
                 surfacecolor=surfacecolor,
             ),
-            use_container_width=True,
+            width="stretch",
         )
 
         with st.expander("Export 3D"):
@@ -811,17 +809,17 @@ else:
     col_a, col_b = st.columns(2)
     with col_a:
         st.markdown("**Cell + gradients**")
-        st.plotly_chart(perlin2d_cell_figure(debug), use_container_width=True)
+        st.plotly_chart(perlin2d_cell_figure(debug), width="stretch")
 
     with col_b:
         st.markdown("**Fade curves**")
         st.plotly_chart(
             fade_curve_figure(t_value=float(debug["relative"]["xf"]), title="fade(x)"),
-            use_container_width=True,
+            width="stretch",
         )
         st.plotly_chart(
             fade_curve_figure(t_value=float(debug["relative"]["yf"]), title="fade(y)"),
-            use_container_width=True,
+            width="stretch",
         )
 
     st.markdown("**Interpolation values**")
@@ -838,8 +836,8 @@ else:
     st.markdown("**Scanline animator**")
     steps = st.slider("Scan steps", min_value=32, max_value=512, value=256, step=32)
     series = scanline_series_from_debug(debug, steps=int(steps))
-    st.plotly_chart(scanline_figure(series), use_container_width=True)
-    st.plotly_chart(scanline_dots_figure(series), use_container_width=True)
+    st.plotly_chart(scanline_figure(series), width="stretch")
+    st.plotly_chart(scanline_dots_figure(series), width="stretch")
 
     with st.expander("Raw debug JSON"):
         st.json(debug)
