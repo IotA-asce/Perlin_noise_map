@@ -26,9 +26,9 @@ Not just "generate noise", but make each mathematical decision visible: gradient
 ### Milestone 1: Correctness-First Perlin (Improved Perlin)
 
 - [x] Implement fade, lerp, gradient hashing, permutation table.
-- [ ] Implement `noise1d`, `noise2d`, `noise3d`.
+- [x] Implement `noise1d`, `noise2d`, `noise3d`.
 - [x] Add reproducibility tests: same seed + params => same output.
-- [ ] Add sanity tests: output bounds, continuity checks, and simple reference fixtures.
+- [x] Add sanity tests: output bounds, continuity checks, and simple reference fixtures.
 
 ### Milestone 2: Step-by-Step Visualization (2D)
 

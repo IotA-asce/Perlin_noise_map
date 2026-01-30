@@ -49,3 +49,37 @@ def grad2_from_hash(h: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     idx = (h & 7).astype(np.int32)
     g = _GRAD2[idx]
     return g[..., 0], g[..., 1]
+
+
+_GRAD1 = np.array([1.0, -1.0], dtype=np.float64)
+
+
+def grad1_from_hash(h: np.ndarray) -> np.ndarray:
+    idx = (h & 1).astype(np.int32)
+    return _GRAD1[idx]
+
+
+_GRAD3 = np.array(
+    [
+        [1.0, 1.0, 0.0],
+        [-1.0, 1.0, 0.0],
+        [1.0, -1.0, 0.0],
+        [-1.0, -1.0, 0.0],
+        [1.0, 0.0, 1.0],
+        [-1.0, 0.0, 1.0],
+        [1.0, 0.0, -1.0],
+        [-1.0, 0.0, -1.0],
+        [0.0, 1.0, 1.0],
+        [0.0, -1.0, 1.0],
+        [0.0, 1.0, -1.0],
+        [0.0, -1.0, -1.0],
+    ],
+    dtype=np.float64,
+)
+_GRAD3 /= np.linalg.norm(_GRAD3, axis=1, keepdims=True)
+
+
+def grad3_from_hash(h: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    idx = (h % 12).astype(np.int32)
+    g = _GRAD3[idx]
+    return g[..., 0], g[..., 1], g[..., 2]
