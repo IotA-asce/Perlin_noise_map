@@ -1497,16 +1497,42 @@ if page == "Explore":
                 "shade": str(shade_mode),
                 "z_scale": float(z_scale),
             }
-            st.download_button(
-                "Download PNG (grayscale)",
-                data=array_to_png_bytes(z01),
-                file_name="perlin_map.png",
-                mime="image/png",
+
+            base_name = (
+                st.text_input(
+                    "Base filename",
+                    value="perlin_map",
+                    help="Used for exported files.",
+                ).strip()
+                or "perlin_map"
             )
+            export_kind = st.selectbox(
+                "Data export",
+                ["PNG (grayscale)", "NumPy (.npy)"],
+                index=0,
+            )
+
+            if export_kind == "PNG (grayscale)":
+                png = array_to_png_bytes(z01)
+                st.image(png, caption="Preview (grayscale)")
+                st.download_button(
+                    "Download PNG",
+                    data=png,
+                    file_name=f"{base_name}.png",
+                    mime="image/png",
+                )
+            else:
+                st.download_button(
+                    "Download .npy",
+                    data=array_to_npy_bytes(z01),
+                    file_name=f"{base_name}.npy",
+                    mime="application/octet-stream",
+                )
+
             st.download_button(
                 "Download params.json",
                 data=json.dumps(params, indent=2, sort_keys=True),
-                file_name="params.json",
+                file_name=f"{base_name}.params.json",
                 mime="application/json",
             )
             st.caption(

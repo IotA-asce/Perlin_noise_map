@@ -80,7 +80,7 @@ Not just "generate noise", but make each mathematical decision visible: gradient
 - [x] Add a "quality" selector: LOD for 2D/3D with progressive refinement (fast preview then refine).
 - [ ] Add a dedicated "Learn" design: step cards, breadcrumbs, and a consistent inspector panel.
 - [x] Replace the most latency-sensitive sliders with a custom Streamlit component that emits values while dragging.
-- [ ] Improve exports UX: export panel with format options, naming, and a preview of what will be exported.
+- [x] Improve exports UX: export panel with format options, naming, and a preview of what will be exported.
 
 ## Performance Targets
 
