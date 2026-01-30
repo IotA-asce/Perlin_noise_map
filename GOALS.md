@@ -59,6 +59,29 @@ Not just "generate noise", but make each mathematical decision visible: gradient
 - [x] Alternative gradient sets and artifacts exploration (grid-alignment, directional bias).
 - [x] Comparisons: value noise vs gradient noise; Perlin vs Simplex (optional).
 
+## UI Enhancements (Backlog)
+
+- [ ] Establish a cohesive visual theme (typography, spacing scale, colors, surfaces, shadows).
+- [ ] Add a modern app layout with a persistent header, compact sidebar, and clear section hierarchy.
+- [ ] Create a "Live preview" mode that updates maps continuously while adjusting controls (with throttling).
+- [ ] Add a "Apply" / "Pause updates" mode for heavy configs (batch updates via form) as a performance escape hatch.
+- [ ] Add a performance HUD: last render time, cache hits, resolution, and estimated FPS.
+- [ ] Add responsive layout rules for mobile/tablet (stacking, smaller charts, collapsible panels).
+- [ ] Improve chart framing: titles, legends, axis hiding, consistent margins, and value readouts.
+- [ ] Add a colorbar + value probe (hover shows value, min/max/mean shown persistently).
+- [ ] Add tasteful motion: initial load reveal, subtle transitions for chart updates, no jitter.
+- [ ] Add presets: "Terrain", "Marble", "Clouds", "Islands", "Ridged mountains", etc.
+- [ ] Add parameter bookmarking in-session (save/restore snapshots) beyond URL query params.
+- [ ] Add an inline diff mode: compare A vs B settings side-by-side with synchronized controls.
+- [ ] Add an interactive cross-section tool: pick a row/column and plot the 1D slice.
+- [ ] Add a minimap / viewport navigator for offsets (drag to pan, wheel to zoom).
+- [ ] Add keyboard shortcuts for common actions (reset, randomize seed, toggle histogram, toggle 3D).
+- [ ] Add input validation UX: inline warnings, clamping indicators, and disabled states when invalid.
+- [ ] Add a "quality" selector: LOD for 2D/3D with progressive refinement (fast preview then refine).
+- [ ] Add a dedicated "Learn" design: step cards, breadcrumbs, and a consistent inspector panel.
+- [ ] Replace the most latency-sensitive sliders with a custom Streamlit component that emits values while dragging.
+- [ ] Improve exports UX: export panel with format options, naming, and a preview of what will be exported.
+
 ## Performance Targets
 
 - [x] 2D: interactive at typical sizes (e.g., 256x256 to 1024x1024) with responsive UI.
