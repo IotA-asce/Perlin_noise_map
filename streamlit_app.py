@@ -1185,6 +1185,105 @@ if page == "Explore":
                 plot_bgcolor="rgba(0,0,0,0)",
             )
             st.plotly_chart(fig, width="stretch", key="xsec_plot")
+
+        with st.expander("Diff mode"):
+            if rendering_preview:
+                st.info("Release the slider to run diff comparisons.")
+            else:
+                options: list[tuple[str, str]] = []
+                for name in _PRESETS.keys():
+                    options.append((f"preset:{name}", f"Preset: {name}"))
+                for i, s in enumerate(st.session_state.get("snapshots", [])):
+                    options.append((f"snap:{i}", f"Snapshot: {s['name']}"))
+
+                if not options:
+                    st.caption("Create a snapshot or use presets to compare.")
+                else:
+                    choice = st.selectbox(
+                        "Compare against",
+                        options,
+                        format_func=lambda t: t[1],
+                        key="diff_choice",
+                    )
+
+                    key = choice[0]
+                    label = choice[1]
+
+                    other = dict(params_for_url)
+                    if str(key).startswith("preset:"):
+                        preset = str(key).split(":", 1)[1]
+                        other.update(_PRESETS[preset])
+                    elif str(key).startswith("snap:"):
+                        idx = int(str(key).split(":", 1)[1])
+                        other.update(st.session_state["snapshots"][idx]["params"])
+
+                    def _to_int(k: str, fallback: int) -> int:
+                        try:
+                            return int(float(other.get(k, str(fallback))))
+                        except ValueError:
+                            return int(fallback)
+
+                    def _to_float(k: str, fallback: float) -> float:
+                        try:
+                            return float(other.get(k, str(fallback)))
+                        except ValueError:
+                            return float(fallback)
+
+                    z_other = _noise_map(
+                        seed=_to_int("seed", seed),
+                        basis=str(other.get("basis", basis)),
+                        grad_set=str(other.get("grad2", grad2)),
+                        width=int(width_render),
+                        height=int(height_render),
+                        scale=_to_float("scale", scale),
+                        octaves=_to_int("octaves", octaves),
+                        lacunarity=_to_float("lacunarity", lacunarity),
+                        persistence=_to_float("persistence", persistence),
+                        variant=str(other.get("noise", noise_variant)),
+                        warp_amp=_to_float("warp_amp", warp_amp),
+                        warp_scale=_to_float("warp_scale", warp_scale),
+                        warp_octaves=_to_int("warp_octaves", warp_octaves),
+                        offset_x=_to_float("offset_x", offset_x),
+                        offset_y=_to_float("offset_y", offset_y),
+                        normalize=bool(normalize),
+                        tileable=bool(tileable),
+                    )
+
+                    diff = z01 - z_other
+                    c0, c1, c2 = st.columns(3)
+                    with c0:
+                        st.markdown("**Current**")
+                        st.plotly_chart(
+                            _heatmap(
+                                z01,
+                                colorscale=str(colorscale),
+                                show_colorbar=False,
+                            ),
+                            width="stretch",
+                            key="diff_current",
+                        )
+                    with c1:
+                        st.markdown(f"**{label}**")
+                        st.plotly_chart(
+                            _heatmap(
+                                z_other,
+                                colorscale=str(colorscale),
+                                show_colorbar=False,
+                            ),
+                            width="stretch",
+                            key="diff_other",
+                        )
+                    with c2:
+                        st.markdown("**Difference**")
+                        st.plotly_chart(
+                            _heatmap(
+                                diff,
+                                colorscale="IceFire",
+                                show_colorbar=False,
+                            ),
+                            width="stretch",
+                            key="diff_delta",
+                        )
         if show_hist:
             st.plotly_chart(_histogram(z01), width="stretch", key="explore_hist")
 
