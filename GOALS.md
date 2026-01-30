@@ -10,10 +10,10 @@ Not just "generate noise", but make each mathematical decision visible: gradient
 
 ## Core Goals
 
-- [ ] Step-by-step visualization of how Perlin noise is generated.
-- [ ] A 3D map rendered in real time with interactivity.
-- [ ] Clean, well-tested Perlin implementations (1D/2D/3D) with deterministic seeding.
-- [ ] A learning-first codebase: readable, modular, and easy to extend.
+- [x] Step-by-step visualization of how Perlin noise is generated.
+- [x] A 3D map rendered in real time with interactivity.
+- [x] Clean, well-tested Perlin implementations (1D/2D/3D) with deterministic seeding.
+- [x] A learning-first codebase: readable, modular, and easy to extend.
 
 ## Milestones
 
@@ -71,6 +71,6 @@ Not just "generate noise", but make each mathematical decision visible: gradient
 
 ## Definition of Done (For This Repo)
 
-- [ ] The app can teach Perlin noise step-by-step to someone who knows basic vectors and interpolation.
-- [ ] The implementation is test-covered, deterministic, and modular.
-- [ ] The 3D view is interactive and updates quickly enough to encourage experimentation.
+- [x] The app can teach Perlin noise step-by-step to someone who knows basic vectors and interpolation.
+- [x] The implementation is test-covered, deterministic, and modular.
+- [x] The 3D view is interactive and updates quickly enough to encourage experimentation.
