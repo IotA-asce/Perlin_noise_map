@@ -1669,31 +1669,37 @@ if page == "Explore":
                 mime="application/octet-stream",
             )
 else:
-    st.subheader("Step-by-step Generation (Work in progress)")
-    st.write(
-        (
-            "This page will evolve into a full, inspectable breakdown of Perlin noise "
-            "generation: grid corners, gradient vectors, dot products, fade curve "
-            "values, interpolation, and octaves."
-        )
-    )
+    st.subheader("Learn: Perlin Noise (2D)")
+    st.caption("Pick a point inside a lattice cell and inspect each intermediate step.")
 
     perlin = Perlin2D(seed=int(seed), grad_set=str(grad2))
-    st.markdown("**Inspect a single point**")
-    px = st.slider("x", min_value=0.0, max_value=10.0, value=2.25, step=0.05)
-    py = st.slider("y", min_value=0.0, max_value=10.0, value=3.75, step=0.05)
+    px = st.slider(
+        "x",
+        min_value=0.0,
+        max_value=10.0,
+        value=2.25,
+        step=0.05,
+        key="learn_px",
+    )
+    py = st.slider(
+        "y",
+        min_value=0.0,
+        max_value=10.0,
+        value=3.75,
+        step=0.05,
+        key="learn_py",
+    )
     debug = perlin.debug_point(px, py)
 
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.markdown("**Cell + gradients**")
-        st.plotly_chart(
-            perlin2d_cell_figure(debug),
-            width="stretch",
-            key="learn_cell",
-        )
+    t_cell, t_fade, t_interp, t_scan, t_raw = st.tabs(
+        ["Cell", "Fade", "Interpolation", "Scanline", "Raw"]
+    )
 
-    with col_b:
+    with t_cell:
+        st.markdown("**Lattice cell + gradient vectors**")
+        st.plotly_chart(perlin2d_cell_figure(debug), width="stretch", key="learn_cell")
+
+    with t_fade:
         st.markdown("**Fade curves**")
         st.plotly_chart(
             fade_curve_figure(t_value=float(debug["relative"]["xf"]), title="fade(x)"),
@@ -1706,26 +1712,37 @@ else:
             key="learn_fade_y",
         )
 
-    st.markdown("**Interpolation values**")
-    st.write(
-        {
-            "u": debug["fade"]["u"],
-            "v": debug["fade"]["v"],
-            "x_lerp0": debug["interpolation"]["x_lerp0"],
-            "x_lerp1": debug["interpolation"]["x_lerp1"],
-            "noise": debug["noise"],
-        }
-    )
+    with t_interp:
+        st.markdown("**Interpolation values**")
+        st.write(
+            {
+                "u": debug["fade"]["u"],
+                "v": debug["fade"]["v"],
+                "x_lerp0": debug["interpolation"]["x_lerp0"],
+                "x_lerp1": debug["interpolation"]["x_lerp1"],
+                "noise": debug["noise"],
+            }
+        )
 
-    st.markdown("**Scanline animator**")
-    steps = st.slider("Scan steps", min_value=32, max_value=512, value=256, step=32)
-    series = scanline_series_from_debug(debug, steps=int(steps))
-    st.plotly_chart(scanline_figure(series), width="stretch", key="learn_scanline")
-    st.plotly_chart(
-        scanline_dots_figure(series), width="stretch", key="learn_scan_dots"
-    )
+    with t_scan:
+        st.markdown("**Scanline animator**")
+        steps = st.slider(
+            "Scan steps",
+            min_value=32,
+            max_value=512,
+            value=256,
+            step=32,
+            key="learn_scan_steps",
+        )
+        series = scanline_series_from_debug(debug, steps=int(steps))
+        st.plotly_chart(scanline_figure(series), width="stretch", key="learn_scanline")
+        st.plotly_chart(
+            scanline_dots_figure(series),
+            width="stretch",
+            key="learn_scan_dots",
+        )
 
-    with st.expander("Raw debug JSON"):
+    with t_raw:
         st.json(debug)
 
 
