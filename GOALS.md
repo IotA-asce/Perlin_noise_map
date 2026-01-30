@@ -73,7 +73,7 @@ Not just "generate noise", but make each mathematical decision visible: gradient
 - [x] Add presets: "Terrain", "Marble", "Clouds", "Islands", "Ridged mountains", etc.
 - [x] Add parameter bookmarking in-session (save/restore snapshots) beyond URL query params.
 - [ ] Add an inline diff mode: compare A vs B settings side-by-side with synchronized controls.
-- [ ] Add an interactive cross-section tool: pick a row/column and plot the 1D slice.
+- [x] Add an interactive cross-section tool: pick a row/column and plot the 1D slice.
 - [ ] Add a minimap / viewport navigator for offsets (drag to pan, wheel to zoom).
 - [ ] Add keyboard shortcuts for common actions (reset, randomize seed, toggle histogram, toggle 3D).
 - [ ] Add input validation UX: inline warnings, clamping indicators, and disabled states when invalid.

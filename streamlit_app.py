@@ -1146,6 +1146,45 @@ if page == "Explore":
             iy = st.slider("y index", 0, max_y, 0, key="probe_y")
             v = float(z01[int(iy), int(ix)])
             st.metric("value", f"{v:.6f}")
+
+        with st.expander("Cross-section"):
+            mode = st.radio(
+                "",
+                ["Row", "Column"],
+                horizontal=True,
+                label_visibility="collapsed",
+                key="xsec_mode",
+            )
+            if mode == "Row":
+                max_i = max(int(z01.shape[0]) - 1, 0)
+                idx = st.slider("row index", 0, max_i, min(0, max_i), key="xsec_row")
+                y = z01[int(idx), :]
+                x = np.arange(y.shape[0])
+                title = f"Row {int(idx)}"
+            else:
+                max_i = max(int(z01.shape[1]) - 1, 0)
+                idx = st.slider("column index", 0, max_i, min(0, max_i), key="xsec_col")
+                y = z01[:, int(idx)]
+                x = np.arange(y.shape[0])
+                title = f"Column {int(idx)}"
+
+            fig = go.Figure(
+                data=go.Scatter(
+                    x=x,
+                    y=y,
+                    mode="lines",
+                    line=dict(color="rgba(255,255,255,0.85)", width=2),
+                    showlegend=False,
+                )
+            )
+            fig.update_layout(
+                margin=dict(l=0, r=0, t=30, b=0),
+                height=260,
+                title=title,
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+            )
+            st.plotly_chart(fig, width="stretch", key="xsec_plot")
         if show_hist:
             st.plotly_chart(_histogram(z01), width="stretch", key="explore_hist")
 
