@@ -89,6 +89,23 @@ details summary {
     width: 260px;
   }
 }
+
+@media (max-width: 700px) {
+  [data-testid="stAppViewContainer"] > .main {
+    padding-left: 0.85rem;
+    padding-right: 0.85rem;
+    padding-top: 0.9rem;
+  }
+
+  .pn-header {
+    padding: 0.75rem 0.85rem;
+    border-radius: 14px;
+  }
+
+  .pn-title {
+    font-size: 1.2rem;
+  }
+}
 """
 
 
