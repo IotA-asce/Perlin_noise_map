@@ -1,0 +1,20 @@
+.DS_Store
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Streamlit
+.streamlit/
+
+# Editors
+.vscode/
+.idea/
+
+# Agent tooling notes (local)
+AGENT.md
