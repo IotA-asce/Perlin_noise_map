@@ -1,16 +1,24 @@
 from __future__ import annotations
 
 import math
+from typing import Protocol
 
 import numpy as np
 
-from .core import Corner2D, fade, grad2_from_hash, lerp, make_permutation
+from .core import Corner2D, fade, grad2_from_hash, grad2_table, lerp, make_permutation
+
+
+class Noise2D(Protocol):
+    def noise(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:  # pragma: no cover
+        ...
 
 
 class Perlin2D:
-    def __init__(self, *, seed: int = 0):
+    def __init__(self, *, seed: int = 0, grad_set: str = "diag8"):
         self.seed = int(seed)
         self.perm = make_permutation(self.seed)
+        self.grad_set = str(grad_set)
+        self.grad_table = grad2_table(self.grad_set)
 
     def noise(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         x = np.asarray(x, dtype=np.float64)
@@ -32,10 +40,10 @@ class Perlin2D:
         ba = p[p[xi1] + yi0]
         bb = p[p[xi1] + yi1]
 
-        gxaa, gyaa = grad2_from_hash(aa)
-        gxab, gyab = grad2_from_hash(ab)
-        gxba, gyba = grad2_from_hash(ba)
-        gxbb, gybb = grad2_from_hash(bb)
+        gxaa, gyaa = grad2_from_hash(aa, grad_table=self.grad_table)
+        gxab, gyab = grad2_from_hash(ab, grad_table=self.grad_table)
+        gxba, gyba = grad2_from_hash(ba, grad_table=self.grad_table)
+        gxbb, gybb = grad2_from_hash(bb, grad_table=self.grad_table)
 
         x0 = xf
         y0 = yf
@@ -73,7 +81,10 @@ class Perlin2D:
         bb = int(p[p[xi1] + yi1])
 
         def corner(h: int, dx: float, dy: float) -> Corner2D:
-            gx, gy = grad2_from_hash(np.array(h, dtype=np.int32))
+            gx, gy = grad2_from_hash(
+                np.array(h, dtype=np.int32),
+                grad_table=self.grad_table,
+            )
             gx = float(gx)
             gy = float(gy)
             return Corner2D(gx=gx, gy=gy, dx=dx, dy=dy, dot=(gx * dx + gy * dy))
@@ -109,7 +120,7 @@ class Perlin2D:
 
 
 def fbm2(
-    perlin: Perlin2D,
+    noise: Noise2D,
     x: np.ndarray,
     y: np.ndarray,
     *,
@@ -130,7 +141,7 @@ def fbm2(
     amp_sum = 0.0
 
     for _ in range(max(octaves, 1)):
-        total += amp * perlin.noise(x * freq, y * freq)
+        total += amp * noise.noise(x * freq, y * freq)
         amp_sum += amp
         amp *= persistence
         freq *= lacunarity
@@ -141,7 +152,7 @@ def fbm2(
 
 
 def turbulence2(
-    perlin: Perlin2D,
+    noise: Noise2D,
     x: np.ndarray,
     y: np.ndarray,
     *,
@@ -162,7 +173,7 @@ def turbulence2(
     amp_sum = 0.0
 
     for _ in range(max(octaves, 1)):
-        total += amp * np.abs(perlin.noise(x * freq, y * freq))
+        total += amp * np.abs(noise.noise(x * freq, y * freq))
         amp_sum += amp
         amp *= persistence
         freq *= lacunarity
@@ -173,7 +184,7 @@ def turbulence2(
 
 
 def ridged2(
-    perlin: Perlin2D,
+    noise: Noise2D,
     x: np.ndarray,
     y: np.ndarray,
     *,
@@ -194,7 +205,7 @@ def ridged2(
     amp_sum = 0.0
 
     for _ in range(max(octaves, 1)):
-        signal = 1.0 - np.abs(perlin.noise(x * freq, y * freq))
+        signal = 1.0 - np.abs(noise.noise(x * freq, y * freq))
         signal = signal * signal
         total += amp * signal
         amp_sum += amp
@@ -207,7 +218,7 @@ def ridged2(
 
 
 def domain_warp2(
-    perlin: Perlin2D,
+    perlin: Noise2D,
     x: np.ndarray,
     y: np.ndarray,
     *,
@@ -295,7 +306,7 @@ def tileable2d(
 
 
 def tileable_fbm2(
-    perlin: Perlin2D,
+    perlin: Noise2D,
     x: np.ndarray,
     y: np.ndarray,
     *,

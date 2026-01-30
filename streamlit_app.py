@@ -16,6 +16,7 @@ from perlin.noise_2d import (
     tileable2d,
     turbulence2,
 )
+from perlin.value_noise_2d import ValueNoise2D
 from viz.export import array_to_npy_bytes, array_to_png_bytes, heightmap_to_obj_bytes
 from viz.step_2d import (
     fade_curve_figure,
@@ -83,6 +84,15 @@ _NOISE_VARIANTS = {
     "ridged": "Ridged",
     "domain_warp": "Domain warp",
 }
+_BASES = {
+    "perlin": "Perlin (gradient)",
+    "value": "Value noise",
+}
+_GRAD2_SETS = {
+    "diag8": "8-dir (default)",
+    "axis4": "Axis-only 4-dir",
+    "circle16": "16-dir circle",
+}
 
 default_page = _qp_get("page", "Explore")
 if default_page not in {"Explore", "Learn"}:
@@ -112,6 +122,14 @@ default_noise = _qp_get("noise", "fbm")
 if default_noise not in _NOISE_VARIANTS:
     default_noise = "fbm"
 
+default_basis = _qp_get("basis", "perlin")
+if default_basis not in _BASES:
+    default_basis = "perlin"
+
+default_grad2 = _qp_get("grad2", "diag8")
+if default_grad2 not in _GRAD2_SETS:
+    default_grad2 = "diag8"
+
 default_warp_amp = _qp_float("warp_amp", 1.25, min_value=0.0, max_value=10.0)
 default_warp_scale = _qp_float("warp_scale", 1.5, min_value=0.05, max_value=10.0)
 default_warp_octaves = _qp_int("warp_octaves", 2, min_value=1, max_value=8)
@@ -125,6 +143,8 @@ if default_shade not in {"Height", "Slope"}:
 def _noise_map(
     *,
     seed: int,
+    basis: str,
+    grad_set: str,
     width: int,
     height: int,
     scale: float,
@@ -140,7 +160,14 @@ def _noise_map(
     normalize: bool,
     tileable: bool,
 ) -> np.ndarray:
-    perlin = Perlin2D(seed=seed)
+    basis = str(basis)
+    grad_set = str(grad_set)
+    if basis == "perlin":
+        noise = Perlin2D(seed=seed, grad_set=grad_set)
+    elif basis == "value":
+        noise = ValueNoise2D(seed=seed)
+    else:
+        raise ValueError(f"unknown basis: {basis}")
 
     scale = max(scale, 1e-9)
     if tileable:
@@ -161,7 +188,7 @@ def _noise_map(
     def base(xx: np.ndarray, yy: np.ndarray) -> np.ndarray:
         if variant == "fbm":
             return fbm2(
-                perlin,
+                noise,
                 xx,
                 yy,
                 octaves=octaves,
@@ -170,7 +197,7 @@ def _noise_map(
             )
         if variant == "turbulence":
             return turbulence2(
-                perlin,
+                noise,
                 xx,
                 yy,
                 octaves=octaves,
@@ -179,7 +206,7 @@ def _noise_map(
             )
         if variant == "ridged":
             return ridged2(
-                perlin,
+                noise,
                 xx,
                 yy,
                 octaves=octaves,
@@ -188,7 +215,7 @@ def _noise_map(
             )
         if variant == "domain_warp":
             return domain_warp2(
-                perlin,
+                noise,
                 xx,
                 yy,
                 octaves=octaves,
@@ -317,6 +344,20 @@ with st.sidebar:
 
     st.divider()
     st.header("Parameters")
+    basis = st.selectbox(
+        "Basis",
+        list(_BASES.keys()),
+        index=list(_BASES.keys()).index(default_basis),
+        format_func=lambda k: _BASES[str(k)],
+    )
+    grad2 = str(default_grad2)
+    if str(basis) == "perlin":
+        grad2 = st.selectbox(
+            "Gradient set",
+            list(_GRAD2_SETS.keys()),
+            index=list(_GRAD2_SETS.keys()).index(default_grad2),
+            format_func=lambda k: _GRAD2_SETS[str(k)],
+        )
     noise_variant = st.selectbox(
         "Noise type",
         list(_NOISE_VARIANTS.keys()),
@@ -441,6 +482,8 @@ with st.sidebar:
     st.subheader("Share")
     params_for_url = {
         "page": str(page),
+        "basis": str(basis),
+        "grad2": str(grad2),
         "noise": str(noise_variant),
         "warp_amp": str(float(warp_amp)),
         "warp_scale": str(float(warp_scale)),
@@ -469,6 +512,8 @@ with st.sidebar:
 
 z01 = _noise_map(
     seed=int(seed),
+    basis=str(basis),
+    grad_set=str(grad2),
     width=int(width),
     height=int(height),
     scale=float(scale),
@@ -501,6 +546,120 @@ if page == "Explore":
         if show_hist:
             st.plotly_chart(_histogram(z01), use_container_width=True)
 
+        with st.expander("Compare: Perlin vs Value noise"):
+            perlin_z = _noise_map(
+                seed=int(seed),
+                basis="perlin",
+                grad_set=str(grad2),
+                width=int(width),
+                height=int(height),
+                scale=float(scale),
+                octaves=int(octaves),
+                lacunarity=float(lacunarity),
+                persistence=float(persistence),
+                variant=str(noise_variant),
+                warp_amp=float(warp_amp),
+                warp_scale=float(warp_scale),
+                warp_octaves=int(warp_octaves),
+                offset_x=float(offset_x),
+                offset_y=float(offset_y),
+                normalize=bool(normalize),
+                tileable=bool(tileable),
+            )
+            value_z = _noise_map(
+                seed=int(seed),
+                basis="value",
+                grad_set=str(grad2),
+                width=int(width),
+                height=int(height),
+                scale=float(scale),
+                octaves=int(octaves),
+                lacunarity=float(lacunarity),
+                persistence=float(persistence),
+                variant=str(noise_variant),
+                warp_amp=float(warp_amp),
+                warp_scale=float(warp_scale),
+                warp_octaves=int(warp_octaves),
+                offset_x=float(offset_x),
+                offset_y=float(offset_y),
+                normalize=bool(normalize),
+                tileable=bool(tileable),
+            )
+
+            col0, col1 = st.columns(2)
+            with col0:
+                st.markdown("**Perlin (gradient)**")
+                st.plotly_chart(
+                    _heatmap(perlin_z, colorscale=str(colorscale)),
+                    use_container_width=True,
+                )
+            with col1:
+                st.markdown("**Value noise**")
+                st.plotly_chart(
+                    _heatmap(value_z, colorscale=str(colorscale)),
+                    use_container_width=True,
+                )
+
+        if str(basis) == "perlin":
+            with st.expander("Artifacts: different gradient sets"):
+                st.write(
+                    "Axis-only gradients tend to emphasize grid-aligned artifacts. "
+                    "Compare them to the default 8-direction set."
+                )
+
+                diag8_z = _noise_map(
+                    seed=int(seed),
+                    basis="perlin",
+                    grad_set="diag8",
+                    width=int(width),
+                    height=int(height),
+                    scale=float(scale),
+                    octaves=int(octaves),
+                    lacunarity=float(lacunarity),
+                    persistence=float(persistence),
+                    variant=str(noise_variant),
+                    warp_amp=float(warp_amp),
+                    warp_scale=float(warp_scale),
+                    warp_octaves=int(warp_octaves),
+                    offset_x=float(offset_x),
+                    offset_y=float(offset_y),
+                    normalize=bool(normalize),
+                    tileable=bool(tileable),
+                )
+                axis4_z = _noise_map(
+                    seed=int(seed),
+                    basis="perlin",
+                    grad_set="axis4",
+                    width=int(width),
+                    height=int(height),
+                    scale=float(scale),
+                    octaves=int(octaves),
+                    lacunarity=float(lacunarity),
+                    persistence=float(persistence),
+                    variant=str(noise_variant),
+                    warp_amp=float(warp_amp),
+                    warp_scale=float(warp_scale),
+                    warp_octaves=int(warp_octaves),
+                    offset_x=float(offset_x),
+                    offset_y=float(offset_y),
+                    normalize=bool(normalize),
+                    tileable=bool(tileable),
+                )
+
+                col0, col1 = st.columns(2)
+                with col0:
+                    st.markdown("**diag8**")
+                    st.plotly_chart(
+                        _heatmap(diag8_z, colorscale=str(colorscale)),
+                        use_container_width=True,
+                    )
+                with col1:
+                    st.markdown("**axis4**")
+                    st.plotly_chart(
+                        _heatmap(axis4_z, colorscale=str(colorscale)),
+                        use_container_width=True,
+                    )
+
         if str(noise_variant) == "domain_warp":
             with st.expander("What is domain warping?"):
                 st.write(
@@ -511,6 +670,8 @@ if page == "Explore":
 
                 base_z = _noise_map(
                     seed=int(seed),
+                    basis="perlin",
+                    grad_set=str(grad2),
                     width=int(width),
                     height=int(height),
                     scale=float(scale),
@@ -544,6 +705,8 @@ if page == "Explore":
         with st.expander("Export"):
             params = {
                 "page": str(page),
+                "basis": str(basis),
+                "grad2": str(grad2),
                 "noise": str(noise_variant),
                 "warp_amp": float(warp_amp),
                 "warp_scale": float(warp_scale),
@@ -588,6 +751,8 @@ if page == "Explore":
 
         z3d = _noise_map(
             seed=int(seed),
+            basis=str(basis),
+            grad_set=str(grad2),
             width=int(res3d),
             height=int(res3d),
             scale=float(scale),
@@ -637,7 +802,7 @@ else:
         )
     )
 
-    perlin = Perlin2D(seed=int(seed))
+    perlin = Perlin2D(seed=int(seed), grad_set=str(grad2))
     st.markdown("**Inspect a single point**")
     px = st.slider("x", min_value=0.0, max_value=10.0, value=2.25, step=0.05)
     py = st.slider("y", min_value=0.0, max_value=10.0, value=3.75, step=0.05)

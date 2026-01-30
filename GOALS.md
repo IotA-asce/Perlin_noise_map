@@ -56,8 +56,8 @@ Not just "generate noise", but make each mathematical decision visible: gradient
 
 - [x] Fractal Brownian Motion (fBm), turbulence, ridged multifractal.
 - [x] Domain warping (single + multi-stage) with visual explanation.
-- [ ] Alternative gradient sets and artifacts exploration (grid-alignment, directional bias).
-- [ ] Comparisons: value noise vs gradient noise; Perlin vs Simplex (optional).
+- [x] Alternative gradient sets and artifacts exploration (grid-alignment, directional bias).
+- [x] Comparisons: value noise vs gradient noise; Perlin vs Simplex (optional).
 
 ## Performance Targets
 

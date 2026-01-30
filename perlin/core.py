@@ -29,7 +29,7 @@ class Corner2D:
     dot: float
 
 
-_GRAD2 = np.array(
+_GRAD2_DIAG8 = np.array(
     [
         [1.0, 0.0],
         [-1.0, 0.0],
@@ -42,12 +42,44 @@ _GRAD2 = np.array(
     ],
     dtype=np.float64,
 )
-_GRAD2 /= np.linalg.norm(_GRAD2, axis=1, keepdims=True)
+_GRAD2_DIAG8 /= np.linalg.norm(_GRAD2_DIAG8, axis=1, keepdims=True)
+
+_GRAD2_AXIS4 = np.array(
+    [
+        [1.0, 0.0],
+        [-1.0, 0.0],
+        [0.0, 1.0],
+        [0.0, -1.0],
+    ],
+    dtype=np.float64,
+)
+
+_GRAD2_CIRCLE16 = np.stack(
+    [
+        np.cos(np.linspace(0.0, 2.0 * np.pi, 16, endpoint=False, dtype=np.float64)),
+        np.sin(np.linspace(0.0, 2.0 * np.pi, 16, endpoint=False, dtype=np.float64)),
+    ],
+    axis=1,
+)
 
 
-def grad2_from_hash(h: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    idx = (h & 7).astype(np.int32)
-    g = _GRAD2[idx]
+def grad2_table(name: str) -> np.ndarray:
+    name = str(name)
+    if name in {"diag8", "improved8", "default"}:
+        return _GRAD2_DIAG8
+    if name in {"axis4"}:
+        return _GRAD2_AXIS4
+    if name in {"circle16"}:
+        return _GRAD2_CIRCLE16
+    raise ValueError(f"unknown 2D gradient set: {name}")
+
+
+def grad2_from_hash(
+    h: np.ndarray, *, grad_table: np.ndarray = _GRAD2_DIAG8
+) -> tuple[np.ndarray, np.ndarray]:
+    n = int(grad_table.shape[0])
+    idx = (h % n).astype(np.int32)
+    g = grad_table[idx]
     return g[..., 0], g[..., 1]
 
 
