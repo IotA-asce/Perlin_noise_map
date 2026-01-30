@@ -9,7 +9,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from perlin.noise_2d import Perlin2D, fbm2, tileable_fbm2
-from viz.export import array_to_png_bytes
+from viz.export import array_to_npy_bytes, array_to_png_bytes, heightmap_to_obj_bytes
 from viz.step_2d import (
     fade_curve_figure,
     perlin2d_cell_figure,
@@ -465,6 +465,20 @@ if page == "Explore":
             ),
             use_container_width=True,
         )
+
+        with st.expander("Export 3D"):
+            st.download_button(
+                "Download mesh (OBJ)",
+                data=heightmap_to_obj_bytes(z3d, z_scale=float(z_scale)),
+                file_name="terrain.obj",
+                mime="text/plain",
+            )
+            st.download_button(
+                "Download heightmap (.npy)",
+                data=array_to_npy_bytes(z3d),
+                file_name="heightmap.npy",
+                mime="application/octet-stream",
+            )
 else:
     st.subheader("Step-by-step Generation (Work in progress)")
     st.write(
