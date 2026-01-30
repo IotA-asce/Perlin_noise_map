@@ -7,7 +7,13 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from perlin.noise_2d import Perlin2D, fbm2
-from viz.step_2d import fade_curve_figure, perlin2d_cell_figure
+from viz.step_2d import (
+    fade_curve_figure,
+    perlin2d_cell_figure,
+    scanline_dots_figure,
+    scanline_figure,
+    scanline_series_from_debug,
+)
 
 st.set_page_config(
     page_title="Perlin Noise Map",
@@ -204,6 +210,12 @@ else:
             "noise": debug["noise"],
         }
     )
+
+    st.markdown("**Scanline animator**")
+    steps = st.slider("Scan steps", min_value=32, max_value=512, value=256, step=32)
+    series = scanline_series_from_debug(debug, steps=int(steps))
+    st.plotly_chart(scanline_figure(series), use_container_width=True)
+    st.plotly_chart(scanline_dots_figure(series), use_container_width=True)
 
     with st.expander("Raw debug JSON"):
         st.json(debug)

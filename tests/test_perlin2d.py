@@ -1,6 +1,7 @@
 import numpy as np
 
 from perlin.noise_2d import Perlin2D, fbm2
+from viz.step_2d import scanline_series_from_debug
 
 
 def test_perlin2d_deterministic_for_seed():
@@ -77,3 +78,20 @@ def test_perlin2d_debug_point_matches_noise():
     assert "interpolation" in dbg
     assert "x_lerp0" in dbg["interpolation"]
     assert "x_lerp1" in dbg["interpolation"]
+
+
+def test_scanline_series_matches_perlin_noise():
+    p = Perlin2D(seed=0)
+    x = 2.25
+    y = 3.75
+    dbg = p.debug_point(x, y)
+    series = scanline_series_from_debug(dbg, steps=128)
+
+    x_base = float(np.floor(x))
+    y_base = float(np.floor(y))
+    y_rel = float(dbg["relative"]["yf"])
+
+    xs = x_base + series["t"]
+    ys = y_base + y_rel
+    expected = p.noise(xs, ys)
+    assert np.allclose(series["lerp"]["noise"], expected)

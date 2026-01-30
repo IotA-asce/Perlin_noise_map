@@ -162,3 +162,105 @@ def fade_curve_figure(*, t_value: float, title: str) -> go.Figure:
     fig.update_xaxes(range=[0, 1])
     fig.update_yaxes(range=[0, 1])
     return fig
+
+
+def scanline_series_from_debug(debug: dict, *, steps: int = 256) -> dict:
+    """Build a 1D scanline (x in [0, 1)) within the current lattice cell.
+
+    Uses the corner gradients from `debug` and computes dot products + interpolation
+    across x while keeping y fixed.
+    """
+
+    steps = int(steps)
+    steps = max(8, steps)
+
+    xf0 = float(debug["relative"]["xf"])
+    yf = float(debug["relative"]["yf"])
+    v = float(debug["fade"]["v"])
+
+    t = np.linspace(0.0, 1.0, steps, endpoint=False, dtype=np.float64)
+    u = fade(t)
+
+    c00 = debug["corners"]["c00"]
+    c10 = debug["corners"]["c10"]
+    c01 = debug["corners"]["c01"]
+    c11 = debug["corners"]["c11"]
+
+    gx00, gy00 = float(c00["gx"]), float(c00["gy"])
+    gx10, gy10 = float(c10["gx"]), float(c10["gy"])
+    gx01, gy01 = float(c01["gx"]), float(c01["gy"])
+    gx11, gy11 = float(c11["gx"]), float(c11["gy"])
+
+    y0 = yf
+    y1 = yf - 1.0
+    x0 = t
+    x1 = t - 1.0
+
+    d00 = gx00 * x0 + gy00 * y0
+    d10 = gx10 * x1 + gy10 * y0
+    d01 = gx01 * x0 + gy01 * y1
+    d11 = gx11 * x1 + gy11 * y1
+
+    x_lerp0 = d00 + u * (d10 - d00)
+    x_lerp1 = d01 + u * (d11 - d01)
+    noise = x_lerp0 + v * (x_lerp1 - x_lerp0)
+
+    return {
+        "t": t,
+        "xf": xf0,
+        "dots": {"d00": d00, "d10": d10, "d01": d01, "d11": d11},
+        "lerp": {"x_lerp0": x_lerp0, "x_lerp1": x_lerp1, "noise": noise},
+    }
+
+
+def scanline_figure(series: dict) -> go.Figure:
+    t = series["t"]
+    xf = float(series["xf"])
+    noise = series["lerp"]["noise"]
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=t,
+            y=noise,
+            mode="lines",
+            line=dict(color="rgba(255,255,255,0.85)", width=2),
+            name="noise",
+        )
+    )
+    fig.add_vline(x=xf, line_width=2, line_dash="dot", line_color="#ffb000")
+
+    fig.update_layout(
+        title="Scanline: noise(x, y_fixed) within one cell",
+        margin=dict(l=0, r=0, t=40, b=0),
+        height=260,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        legend=dict(orientation="h"),
+    )
+    fig.update_xaxes(range=[0, 1])
+    return fig
+
+
+def scanline_dots_figure(series: dict) -> go.Figure:
+    t = series["t"]
+    xf = float(series["xf"])
+    dots = series["dots"]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=t, y=dots["d00"], mode="lines", name="dot c00"))
+    fig.add_trace(go.Scatter(x=t, y=dots["d10"], mode="lines", name="dot c10"))
+    fig.add_trace(go.Scatter(x=t, y=dots["d01"], mode="lines", name="dot c01"))
+    fig.add_trace(go.Scatter(x=t, y=dots["d11"], mode="lines", name="dot c11"))
+    fig.add_vline(x=xf, line_width=2, line_dash="dot", line_color="#ffb000")
+
+    fig.update_layout(
+        title="Scanline: corner dot products vs x",
+        margin=dict(l=0, r=0, t=40, b=0),
+        height=260,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        legend=dict(orientation="h"),
+    )
+    fig.update_xaxes(range=[0, 1])
+    return fig

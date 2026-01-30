@@ -36,7 +36,7 @@ Not just "generate noise", but make each mathematical decision visible: gradient
 - [x] Visualize the dot product contributions at each corner.
 - [x] Visualize fade curves and interpolation weights.
 - [x] Build a "single cell inspector" that zooms into one lattice cell and shows intermediate values.
-- [ ] Build a "scanline animator" that shows how moving input changes contributions over time.
+- [x] Build a "scanline animator" that shows how moving input changes contributions over time.
 
 ### Milestone 3: 2D Map Explorer
 
