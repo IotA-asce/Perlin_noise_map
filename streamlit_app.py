@@ -34,6 +34,7 @@ def _noise_map(
     persistence: float,
     offset_x: float,
     offset_y: float,
+    normalize: bool,
 ) -> np.ndarray:
     perlin = Perlin2D(seed=seed)
 
@@ -51,6 +52,9 @@ def _noise_map(
         persistence=persistence,
     )
 
+    if not normalize:
+        return z
+
     # Normalize for display.
     zmin = float(np.min(z))
     zmax = float(np.max(z))
@@ -59,11 +63,11 @@ def _noise_map(
     return (z - zmin) / (zmax - zmin)
 
 
-def _heatmap(z01: np.ndarray) -> go.Figure:
+def _heatmap(z: np.ndarray, *, colorscale: str) -> go.Figure:
     fig = go.Figure(
         data=go.Heatmap(
-            z=z01,
-            colorscale="Viridis",
+            z=z,
+            colorscale=colorscale,
             showscale=False,
         )
     )
@@ -85,11 +89,11 @@ def _heatmap(z01: np.ndarray) -> go.Figure:
     return fig
 
 
-def _surface(z01: np.ndarray, *, z_scale: float) -> go.Figure:
+def _surface(z: np.ndarray, *, z_scale: float, colorscale: str) -> go.Figure:
     fig = go.Figure(
         data=go.Surface(
-            z=z01 * z_scale,
-            colorscale="Viridis",
+            z=z * z_scale,
+            colorscale=colorscale,
             showscale=False,
         )
     )
@@ -102,6 +106,24 @@ def _surface(z01: np.ndarray, *, z_scale: float) -> go.Figure:
             zaxis=dict(visible=False),
             aspectmode="data",
         ),
+    )
+    return fig
+
+
+def _histogram(z: np.ndarray) -> go.Figure:
+    fig = go.Figure(
+        data=go.Histogram(
+            x=z.reshape(-1),
+            nbinsx=80,
+            marker=dict(color="rgba(255,255,255,0.75)"),
+        )
+    )
+    fig.update_layout(
+        margin=dict(l=0, r=0, t=30, b=0),
+        height=260,
+        title="Value distribution",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
     )
     return fig
 
@@ -127,6 +149,16 @@ with st.sidebar:
     persistence = st.slider(
         "Persistence", min_value=0.0, max_value=1.0, value=0.5, step=0.01
     )
+
+    st.divider()
+    st.subheader("Display")
+    normalize = st.toggle("Normalize to 0..1", value=True)
+    colorscale = st.selectbox(
+        "Colorscale",
+        ["Viridis", "Cividis", "Turbo", "IceFire", "Earth"],
+        index=0,
+    )
+    show_hist = st.toggle("Show histogram", value=False)
 
     st.divider()
     st.subheader("Viewport")
@@ -155,7 +187,11 @@ z01 = _noise_map(
     persistence=float(persistence),
     offset_x=float(offset_x),
     offset_y=float(offset_y),
+    normalize=bool(normalize),
 )
+
+zmin = float(np.min(z01))
+zmax = float(np.max(z01))
 
 
 if page == "Explore":
@@ -163,11 +199,19 @@ if page == "Explore":
 
     with tab2d:
         st.subheader("2D Noise Map")
-        st.plotly_chart(_heatmap(z01), use_container_width=True)
+        st.caption(f"min={zmin:.4f}, max={zmax:.4f}")
+        st.plotly_chart(
+            _heatmap(z01, colorscale=str(colorscale)), use_container_width=True
+        )
+        if show_hist:
+            st.plotly_chart(_histogram(z01), use_container_width=True)
 
     with tab3d:
         st.subheader("3D Heightmap")
-        st.plotly_chart(_surface(z01, z_scale=float(z_scale)), use_container_width=True)
+        st.plotly_chart(
+            _surface(z01, z_scale=float(z_scale), colorscale=str(colorscale)),
+            use_container_width=True,
+        )
 else:
     st.subheader("Step-by-step Generation (Work in progress)")
     st.write(
