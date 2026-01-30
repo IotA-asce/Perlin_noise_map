@@ -1555,3 +1555,20 @@ with st.sidebar:
 
     fps = 1000.0 / max(p2, 1e-6)
     st.caption(f"Estimated max refresh: ~{fps:.1f} FPS (2D compute only)")
+
+    st.divider()
+    st.subheader("Validation")
+    pixels = int(width) * int(height)
+    if pixels >= 1024 * 1024:
+        st.warning(
+            "Large 2D resolution selected. Consider Apply mode or lower Quality "
+            "while dragging."
+        )
+    elif pixels >= 512 * 512:
+        st.info("Moderate 2D resolution. Live preview may feel heavier.")
+
+    if bool(live_drag) and str(quality) == "Full":
+        st.warning("Quality=Full with live dragging can rerun frequently.")
+
+    if rendering_preview:
+        st.caption("Preview LOD is active; release the slider to refine.")

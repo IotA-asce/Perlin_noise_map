@@ -76,7 +76,7 @@ Not just "generate noise", but make each mathematical decision visible: gradient
 - [x] Add an interactive cross-section tool: pick a row/column and plot the 1D slice.
 - [ ] Add a minimap / viewport navigator for offsets (drag to pan, wheel to zoom).
 - [ ] Add keyboard shortcuts for common actions (reset, randomize seed, toggle histogram, toggle 3D).
-- [ ] Add input validation UX: inline warnings, clamping indicators, and disabled states when invalid.
+- [x] Add input validation UX: inline warnings, clamping indicators, and disabled states when invalid.
 - [x] Add a "quality" selector: LOD for 2D/3D with progressive refinement (fast preview then refine).
 - [ ] Add a dedicated "Learn" design: step cards, breadcrumbs, and a consistent inspector panel.
 - [x] Replace the most latency-sensitive sliders with a custom Streamlit component that emits values while dragging.
