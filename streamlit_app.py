@@ -392,140 +392,420 @@ with st.sidebar:
     )
 
     st.divider()
-    st.header("Parameters")
-    basis = st.selectbox(
-        "Basis",
-        list(_BASES.keys()),
-        index=list(_BASES.keys()).index(default_basis),
-        format_func=lambda k: _BASES[str(k)],
-    )
-    grad2 = str(default_grad2)
-    if str(basis) == "perlin":
-        grad2 = st.selectbox(
-            "Gradient set",
-            list(_GRAD2_SETS.keys()),
-            index=list(_GRAD2_SETS.keys()).index(default_grad2),
-            format_func=lambda k: _GRAD2_SETS[str(k)],
-        )
-    noise_variant = st.selectbox(
-        "Noise type",
-        list(_NOISE_VARIANTS.keys()),
-        index=list(_NOISE_VARIANTS.keys()).index(default_noise),
-        format_func=lambda k: _NOISE_VARIANTS[str(k)],
+    update_mode = st.radio(
+        "Updates",
+        ["Live", "Apply"],
+        index=0,
+        horizontal=True,
+        help=(
+            "Live: reruns when widgets change (fast iteration). "
+            "Apply: batch updates via an Apply button (helps with heavier settings)."
+        ),
     )
 
-    warp_amp = float(default_warp_amp)
-    warp_scale = float(default_warp_scale)
-    warp_octaves = int(default_warp_octaves)
-    if str(noise_variant) == "domain_warp":
-        st.subheader("Domain warp")
-        warp_amp = st.slider(
-            "Warp amplitude",
-            min_value=0.0,
-            max_value=10.0,
-            value=float(default_warp_amp),
-            step=0.05,
+    default_params = {
+        "page": str(page),
+        "basis": str(default_basis),
+        "grad2": str(default_grad2),
+        "noise": str(default_noise),
+        "warp_amp": float(default_warp_amp),
+        "warp_scale": float(default_warp_scale),
+        "warp_octaves": int(default_warp_octaves),
+        "seed": int(default_seed),
+        "scale": float(default_scale),
+        "octaves": int(default_octaves),
+        "lacunarity": float(default_lacunarity),
+        "persistence": float(default_persistence),
+        "width": int(default_width),
+        "height": int(default_height),
+        "offset_x": float(default_offset_x),
+        "offset_y": float(default_offset_y),
+        "z_scale": float(default_z_scale),
+        "res3d": int(default_res3d),
+        "shade": str(default_shade),
+        "normalize": bool(default_normalize),
+        "tileable": bool(default_tileable),
+        "colorscale": str(default_colorscale),
+        "show_hist": bool(default_show_hist),
+    }
+
+    if "applied_params" not in st.session_state:
+        st.session_state["applied_params"] = dict(default_params)
+
+    if update_mode == "Apply":
+        applied = dict(st.session_state["applied_params"])
+
+        with st.form("controls_form", border=False):
+            st.header("Parameters")
+            basis = st.selectbox(
+                "Basis",
+                list(_BASES.keys()),
+                index=list(_BASES.keys()).index(str(applied["basis"])),
+                format_func=lambda k: _BASES[str(k)],
+            )
+            grad2 = str(applied["grad2"])
+            if str(basis) == "perlin":
+                grad2 = st.selectbox(
+                    "Gradient set",
+                    list(_GRAD2_SETS.keys()),
+                    index=list(_GRAD2_SETS.keys()).index(str(applied["grad2"])),
+                    format_func=lambda k: _GRAD2_SETS[str(k)],
+                )
+
+            noise_variant = st.selectbox(
+                "Noise type",
+                list(_NOISE_VARIANTS.keys()),
+                index=list(_NOISE_VARIANTS.keys()).index(str(applied["noise"])),
+                format_func=lambda k: _NOISE_VARIANTS[str(k)],
+            )
+
+            warp_amp = float(applied["warp_amp"])
+            warp_scale = float(applied["warp_scale"])
+            warp_octaves = int(applied["warp_octaves"])
+            if str(noise_variant) == "domain_warp":
+                st.subheader("Domain warp")
+                warp_amp = st.slider(
+                    "Warp amplitude",
+                    min_value=0.0,
+                    max_value=10.0,
+                    value=float(warp_amp),
+                    step=0.05,
+                )
+                warp_scale = st.slider(
+                    "Warp scale",
+                    min_value=0.05,
+                    max_value=10.0,
+                    value=float(warp_scale),
+                    step=0.05,
+                )
+                warp_octaves = st.slider(
+                    "Warp octaves",
+                    min_value=1,
+                    max_value=8,
+                    value=int(warp_octaves),
+                    step=1,
+                )
+
+            seed = st.number_input(
+                "Seed",
+                min_value=0,
+                max_value=2**31 - 1,
+                value=int(applied["seed"]),
+                step=1,
+            )
+            scale = st.slider(
+                "Scale (bigger = smoother)",
+                min_value=5.0,
+                max_value=600.0,
+                value=float(applied["scale"]),
+            )
+            octaves = st.slider(
+                "Octaves",
+                min_value=1,
+                max_value=10,
+                value=int(applied["octaves"]),
+            )
+            lacunarity = st.slider(
+                "Lacunarity",
+                min_value=1.0,
+                max_value=4.0,
+                value=float(applied["lacunarity"]),
+                step=0.05,
+            )
+            persistence = st.slider(
+                "Persistence",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(applied["persistence"]),
+                step=0.01,
+            )
+
+            st.divider()
+            st.subheader("Display")
+            normalize = st.toggle("Normalize to 0..1", value=bool(applied["normalize"]))
+            tileable = st.toggle(
+                "Tileable (seamless edges)", value=bool(applied["tileable"])
+            )
+            colorscale = st.selectbox(
+                "Colorscale",
+                _COLOR_SCALES,
+                index=_COLOR_SCALES.index(str(applied["colorscale"])),
+            )
+            show_hist = st.toggle("Show histogram", value=bool(applied["show_hist"]))
+
+            st.divider()
+            st.subheader("Viewport")
+            width = st.slider(
+                "Width",
+                min_value=64,
+                max_value=1024,
+                value=int(applied["width"]),
+                step=64,
+            )
+            height = st.slider(
+                "Height",
+                min_value=64,
+                max_value=1024,
+                value=int(applied["height"]),
+                step=64,
+            )
+            offset_x = st.slider(
+                "Offset X",
+                min_value=-50.0,
+                max_value=50.0,
+                value=float(applied["offset_x"]),
+                step=0.5,
+            )
+            offset_y = st.slider(
+                "Offset Y",
+                min_value=-50.0,
+                max_value=50.0,
+                value=float(applied["offset_y"]),
+                step=0.5,
+            )
+
+            st.divider()
+            st.subheader("3D")
+            res3d = st.slider(
+                "3D resolution",
+                min_value=64,
+                max_value=256,
+                value=int(applied["res3d"]),
+                step=32,
+            )
+            shade_mode = st.selectbox(
+                "Shading",
+                ["Height", "Slope"],
+                index=0 if str(applied["shade"]) == "Height" else 1,
+            )
+            z_scale = st.slider(
+                "Height scale",
+                min_value=0.0,
+                max_value=200.0,
+                value=float(applied["z_scale"]),
+                step=5.0,
+            )
+
+            applied_now = st.form_submit_button(
+                "Apply changes",
+                type="primary",
+                use_container_width=True,
+            )
+
+        if applied_now:
+            st.session_state["applied_params"] = {
+                "page": str(page),
+                "basis": str(basis),
+                "grad2": str(grad2),
+                "noise": str(noise_variant),
+                "warp_amp": float(warp_amp),
+                "warp_scale": float(warp_scale),
+                "warp_octaves": int(warp_octaves),
+                "seed": int(seed),
+                "scale": float(scale),
+                "octaves": int(octaves),
+                "lacunarity": float(lacunarity),
+                "persistence": float(persistence),
+                "width": int(width),
+                "height": int(height),
+                "offset_x": float(offset_x),
+                "offset_y": float(offset_y),
+                "z_scale": float(z_scale),
+                "res3d": int(res3d),
+                "shade": str(shade_mode),
+                "normalize": bool(normalize),
+                "tileable": bool(tileable),
+                "colorscale": str(colorscale),
+                "show_hist": bool(show_hist),
+            }
+
+        params = dict(st.session_state["applied_params"])
+        params["page"] = str(page)
+    else:
+        st.header("Parameters")
+        basis = st.selectbox(
+            "Basis",
+            list(_BASES.keys()),
+            index=list(_BASES.keys()).index(default_basis),
+            format_func=lambda k: _BASES[str(k)],
         )
-        warp_scale = st.slider(
-            "Warp scale",
-            min_value=0.05,
-            max_value=10.0,
-            value=float(default_warp_scale),
-            step=0.05,
+        grad2 = str(default_grad2)
+        if str(basis) == "perlin":
+            grad2 = st.selectbox(
+                "Gradient set",
+                list(_GRAD2_SETS.keys()),
+                index=list(_GRAD2_SETS.keys()).index(default_grad2),
+                format_func=lambda k: _GRAD2_SETS[str(k)],
+            )
+        noise_variant = st.selectbox(
+            "Noise type",
+            list(_NOISE_VARIANTS.keys()),
+            index=list(_NOISE_VARIANTS.keys()).index(default_noise),
+            format_func=lambda k: _NOISE_VARIANTS[str(k)],
         )
-        warp_octaves = st.slider(
-            "Warp octaves",
-            min_value=1,
-            max_value=8,
-            value=int(default_warp_octaves),
+
+        warp_amp = float(default_warp_amp)
+        warp_scale = float(default_warp_scale)
+        warp_octaves = int(default_warp_octaves)
+        if str(noise_variant) == "domain_warp":
+            st.subheader("Domain warp")
+            warp_amp = st.slider(
+                "Warp amplitude",
+                min_value=0.0,
+                max_value=10.0,
+                value=float(default_warp_amp),
+                step=0.05,
+            )
+            warp_scale = st.slider(
+                "Warp scale",
+                min_value=0.05,
+                max_value=10.0,
+                value=float(default_warp_scale),
+                step=0.05,
+            )
+            warp_octaves = st.slider(
+                "Warp octaves",
+                min_value=1,
+                max_value=8,
+                value=int(default_warp_octaves),
+                step=1,
+            )
+        seed = st.number_input(
+            "Seed",
+            min_value=0,
+            max_value=2**31 - 1,
+            value=int(default_seed),
             step=1,
         )
-    seed = st.number_input(
-        "Seed",
-        min_value=0,
-        max_value=2**31 - 1,
-        value=int(default_seed),
-        step=1,
-    )
-    scale = st.slider(
-        "Scale (bigger = smoother)",
-        min_value=5.0,
-        max_value=600.0,
-        value=float(default_scale),
-    )
-    octaves = st.slider(
-        "Octaves", min_value=1, max_value=10, value=int(default_octaves)
-    )
-    lacunarity = st.slider(
-        "Lacunarity",
-        min_value=1.0,
-        max_value=4.0,
-        value=float(default_lacunarity),
-        step=0.05,
-    )
-    persistence = st.slider(
-        "Persistence",
-        min_value=0.0,
-        max_value=1.0,
-        value=float(default_persistence),
-        step=0.01,
-    )
+        scale = st.slider(
+            "Scale (bigger = smoother)",
+            min_value=5.0,
+            max_value=600.0,
+            value=float(default_scale),
+        )
+        octaves = st.slider(
+            "Octaves", min_value=1, max_value=10, value=int(default_octaves)
+        )
+        lacunarity = st.slider(
+            "Lacunarity",
+            min_value=1.0,
+            max_value=4.0,
+            value=float(default_lacunarity),
+            step=0.05,
+        )
+        persistence = st.slider(
+            "Persistence",
+            min_value=0.0,
+            max_value=1.0,
+            value=float(default_persistence),
+            step=0.01,
+        )
 
-    st.divider()
-    st.subheader("Display")
-    normalize = st.toggle("Normalize to 0..1", value=bool(default_normalize))
-    tileable = st.toggle("Tileable (seamless edges)", value=bool(default_tileable))
-    colorscale = st.selectbox(
-        "Colorscale",
-        _COLOR_SCALES,
-        index=_COLOR_SCALES.index(default_colorscale),
-    )
-    show_hist = st.toggle("Show histogram", value=bool(default_show_hist))
+        st.divider()
+        st.subheader("Display")
+        normalize = st.toggle("Normalize to 0..1", value=bool(default_normalize))
+        tileable = st.toggle("Tileable (seamless edges)", value=bool(default_tileable))
+        colorscale = st.selectbox(
+            "Colorscale",
+            _COLOR_SCALES,
+            index=_COLOR_SCALES.index(default_colorscale),
+        )
+        show_hist = st.toggle("Show histogram", value=bool(default_show_hist))
 
-    st.divider()
-    st.subheader("Viewport")
-    width = st.slider(
-        "Width", min_value=64, max_value=1024, value=int(default_width), step=64
-    )
-    height = st.slider(
-        "Height", min_value=64, max_value=1024, value=int(default_height), step=64
-    )
-    offset_x = st.slider(
-        "Offset X",
-        min_value=-50.0,
-        max_value=50.0,
-        value=float(default_offset_x),
-        step=0.5,
-    )
-    offset_y = st.slider(
-        "Offset Y",
-        min_value=-50.0,
-        max_value=50.0,
-        value=float(default_offset_y),
-        step=0.5,
-    )
+        st.divider()
+        st.subheader("Viewport")
+        width = st.slider(
+            "Width", min_value=64, max_value=1024, value=int(default_width), step=64
+        )
+        height = st.slider(
+            "Height", min_value=64, max_value=1024, value=int(default_height), step=64
+        )
+        offset_x = st.slider(
+            "Offset X",
+            min_value=-50.0,
+            max_value=50.0,
+            value=float(default_offset_x),
+            step=0.5,
+        )
+        offset_y = st.slider(
+            "Offset Y",
+            min_value=-50.0,
+            max_value=50.0,
+            value=float(default_offset_y),
+            step=0.5,
+        )
 
-    st.divider()
-    st.subheader("3D")
-    res3d = st.slider(
-        "3D resolution",
-        min_value=64,
-        max_value=256,
-        value=int(default_res3d),
-        step=32,
-    )
-    shade_mode = st.selectbox(
-        "Shading",
-        ["Height", "Slope"],
-        index=0 if default_shade == "Height" else 1,
-    )
-    z_scale = st.slider(
-        "Height scale",
-        min_value=0.0,
-        max_value=200.0,
-        value=float(default_z_scale),
-        step=5.0,
-    )
+        st.divider()
+        st.subheader("3D")
+        res3d = st.slider(
+            "3D resolution",
+            min_value=64,
+            max_value=256,
+            value=int(default_res3d),
+            step=32,
+        )
+        shade_mode = st.selectbox(
+            "Shading",
+            ["Height", "Slope"],
+            index=0 if default_shade == "Height" else 1,
+        )
+        z_scale = st.slider(
+            "Height scale",
+            min_value=0.0,
+            max_value=200.0,
+            value=float(default_z_scale),
+            step=5.0,
+        )
+
+        params = {
+            "page": str(page),
+            "basis": str(basis),
+            "grad2": str(grad2),
+            "noise": str(noise_variant),
+            "warp_amp": float(warp_amp),
+            "warp_scale": float(warp_scale),
+            "warp_octaves": int(warp_octaves),
+            "seed": int(seed),
+            "scale": float(scale),
+            "octaves": int(octaves),
+            "lacunarity": float(lacunarity),
+            "persistence": float(persistence),
+            "width": int(width),
+            "height": int(height),
+            "offset_x": float(offset_x),
+            "offset_y": float(offset_y),
+            "z_scale": float(z_scale),
+            "res3d": int(res3d),
+            "shade": str(shade_mode),
+            "normalize": bool(normalize),
+            "tileable": bool(tileable),
+            "colorscale": str(colorscale),
+            "show_hist": bool(show_hist),
+        }
+
+    # Values used by the rest of the app.
+    basis = str(params["basis"])
+    grad2 = str(params["grad2"])
+    noise_variant = str(params["noise"])
+    warp_amp = float(params["warp_amp"])
+    warp_scale = float(params["warp_scale"])
+    warp_octaves = int(params["warp_octaves"])
+    seed = int(params["seed"])
+    scale = float(params["scale"])
+    octaves = int(params["octaves"])
+    lacunarity = float(params["lacunarity"])
+    persistence = float(params["persistence"])
+    width = int(params["width"])
+    height = int(params["height"])
+    offset_x = float(params["offset_x"])
+    offset_y = float(params["offset_y"])
+    z_scale = float(params["z_scale"])
+    res3d = int(params["res3d"])
+    shade_mode = str(params["shade"])
+    normalize = bool(params["normalize"])
+    tileable = bool(params["tileable"])
+    colorscale = str(params["colorscale"])
+    show_hist = bool(params["show_hist"])
 
     st.divider()
     st.subheader("Share")

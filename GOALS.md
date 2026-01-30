@@ -64,7 +64,7 @@ Not just "generate noise", but make each mathematical decision visible: gradient
 - [x] Establish a cohesive visual theme (typography, spacing scale, colors, surfaces, shadows).
 - [x] Add a modern app layout with a persistent header, compact sidebar, and clear section hierarchy.
 - [ ] Create a "Live preview" mode that updates maps continuously while adjusting controls (with throttling).
-- [ ] Add a "Apply" / "Pause updates" mode for heavy configs (batch updates via form) as a performance escape hatch.
+- [x] Add a "Apply" / "Pause updates" mode for heavy configs (batch updates via form) as a performance escape hatch.
 - [ ] Add a performance HUD: last render time, cache hits, resolution, and estimated FPS.
 - [ ] Add responsive layout rules for mobile/tablet (stacking, smaller charts, collapsible panels).
 - [ ] Improve chart framing: titles, legends, axis hiding, consistent margins, and value readouts.
