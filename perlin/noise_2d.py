@@ -206,6 +206,58 @@ def ridged2(
     return total / amp_sum
 
 
+def domain_warp2(
+    perlin: Perlin2D,
+    x: np.ndarray,
+    y: np.ndarray,
+    *,
+    octaves: int = 4,
+    lacunarity: float = 2.0,
+    persistence: float = 0.5,
+    warp_amp: float = 1.0,
+    warp_scale: float = 1.0,
+    warp_octaves: int = 2,
+    warp_lacunarity: float = 2.0,
+    warp_persistence: float = 0.5,
+) -> np.ndarray:
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+
+    warp_amp = float(warp_amp)
+    warp_scale = float(warp_scale)
+    if warp_scale <= 0.0:
+        raise ValueError("warp_scale must be > 0")
+
+    # Two decorrelated fields to perturb x and y.
+    dx = fbm2(
+        perlin,
+        (x + 19.1) * warp_scale,
+        (y + 47.2) * warp_scale,
+        octaves=warp_octaves,
+        lacunarity=warp_lacunarity,
+        persistence=warp_persistence,
+    )
+    dy = fbm2(
+        perlin,
+        (x - 11.8) * warp_scale,
+        (y + 7.3) * warp_scale,
+        octaves=warp_octaves,
+        lacunarity=warp_lacunarity,
+        persistence=warp_persistence,
+    )
+
+    xw = x + warp_amp * dx
+    yw = y + warp_amp * dy
+    return fbm2(
+        perlin,
+        xw,
+        yw,
+        octaves=octaves,
+        lacunarity=lacunarity,
+        persistence=persistence,
+    )
+
+
 def tileable2d(
     func,
     x: np.ndarray,

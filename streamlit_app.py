@@ -8,7 +8,14 @@ import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 
-from perlin.noise_2d import Perlin2D, fbm2, ridged2, tileable2d, turbulence2
+from perlin.noise_2d import (
+    Perlin2D,
+    domain_warp2,
+    fbm2,
+    ridged2,
+    tileable2d,
+    turbulence2,
+)
 from viz.export import array_to_npy_bytes, array_to_png_bytes, heightmap_to_obj_bytes
 from viz.step_2d import (
     fade_curve_figure,
@@ -74,6 +81,7 @@ _NOISE_VARIANTS = {
     "fbm": "fBm",
     "turbulence": "Turbulence",
     "ridged": "Ridged",
+    "domain_warp": "Domain warp",
 }
 
 default_page = _qp_get("page", "Explore")
@@ -104,6 +112,10 @@ default_noise = _qp_get("noise", "fbm")
 if default_noise not in _NOISE_VARIANTS:
     default_noise = "fbm"
 
+default_warp_amp = _qp_float("warp_amp", 1.25, min_value=0.0, max_value=10.0)
+default_warp_scale = _qp_float("warp_scale", 1.5, min_value=0.05, max_value=10.0)
+default_warp_octaves = _qp_int("warp_octaves", 2, min_value=1, max_value=8)
+
 default_shade = _qp_get("shade", "Height")
 if default_shade not in {"Height", "Slope"}:
     default_shade = "Height"
@@ -120,6 +132,9 @@ def _noise_map(
     lacunarity: float,
     persistence: float,
     variant: str,
+    warp_amp: float,
+    warp_scale: float,
+    warp_octaves: int,
     offset_x: float,
     offset_y: float,
     normalize: bool,
@@ -139,6 +154,9 @@ def _noise_map(
     xg, yg = np.meshgrid(xs, ys)
 
     variant = str(variant)
+    warp_amp = float(warp_amp)
+    warp_scale = float(warp_scale)
+    warp_octaves = int(warp_octaves)
 
     def base(xx: np.ndarray, yy: np.ndarray) -> np.ndarray:
         if variant == "fbm":
@@ -167,6 +185,20 @@ def _noise_map(
                 octaves=octaves,
                 lacunarity=lacunarity,
                 persistence=persistence,
+            )
+        if variant == "domain_warp":
+            return domain_warp2(
+                perlin,
+                xx,
+                yy,
+                octaves=octaves,
+                lacunarity=lacunarity,
+                persistence=persistence,
+                warp_amp=warp_amp,
+                warp_scale=warp_scale,
+                warp_octaves=warp_octaves,
+                warp_lacunarity=lacunarity,
+                warp_persistence=persistence,
             )
         raise ValueError(f"unknown variant: {variant}")
 
@@ -291,6 +323,33 @@ with st.sidebar:
         index=list(_NOISE_VARIANTS.keys()).index(default_noise),
         format_func=lambda k: _NOISE_VARIANTS[str(k)],
     )
+
+    warp_amp = float(default_warp_amp)
+    warp_scale = float(default_warp_scale)
+    warp_octaves = int(default_warp_octaves)
+    if str(noise_variant) == "domain_warp":
+        st.subheader("Domain warp")
+        warp_amp = st.slider(
+            "Warp amplitude",
+            min_value=0.0,
+            max_value=10.0,
+            value=float(default_warp_amp),
+            step=0.05,
+        )
+        warp_scale = st.slider(
+            "Warp scale",
+            min_value=0.05,
+            max_value=10.0,
+            value=float(default_warp_scale),
+            step=0.05,
+        )
+        warp_octaves = st.slider(
+            "Warp octaves",
+            min_value=1,
+            max_value=8,
+            value=int(default_warp_octaves),
+            step=1,
+        )
     seed = st.number_input(
         "Seed",
         min_value=0,
@@ -383,6 +442,9 @@ with st.sidebar:
     params_for_url = {
         "page": str(page),
         "noise": str(noise_variant),
+        "warp_amp": str(float(warp_amp)),
+        "warp_scale": str(float(warp_scale)),
+        "warp_octaves": str(int(warp_octaves)),
         "seed": str(int(seed)),
         "scale": str(float(scale)),
         "octaves": str(int(octaves)),
@@ -414,6 +476,9 @@ z01 = _noise_map(
     lacunarity=float(lacunarity),
     persistence=float(persistence),
     variant=str(noise_variant),
+    warp_amp=float(warp_amp),
+    warp_scale=float(warp_scale),
+    warp_octaves=int(warp_octaves),
     offset_x=float(offset_x),
     offset_y=float(offset_y),
     normalize=bool(normalize),
@@ -436,10 +501,53 @@ if page == "Explore":
         if show_hist:
             st.plotly_chart(_histogram(z01), use_container_width=True)
 
+        if str(noise_variant) == "domain_warp":
+            with st.expander("What is domain warping?"):
+                st.write(
+                    "Domain warping perturbs the input coordinates (x, y) with another "
+                    "noise field, then samples the base noise at the "
+                    "warped coordinates."
+                )
+
+                base_z = _noise_map(
+                    seed=int(seed),
+                    width=int(width),
+                    height=int(height),
+                    scale=float(scale),
+                    octaves=int(octaves),
+                    lacunarity=float(lacunarity),
+                    persistence=float(persistence),
+                    variant="fbm",
+                    warp_amp=float(warp_amp),
+                    warp_scale=float(warp_scale),
+                    warp_octaves=int(warp_octaves),
+                    offset_x=float(offset_x),
+                    offset_y=float(offset_y),
+                    normalize=bool(normalize),
+                    tileable=bool(tileable),
+                )
+
+                col0, col1 = st.columns(2)
+                with col0:
+                    st.markdown("**Base (fBm)**")
+                    st.plotly_chart(
+                        _heatmap(base_z, colorscale=str(colorscale)),
+                        use_container_width=True,
+                    )
+                with col1:
+                    st.markdown("**Warped**")
+                    st.plotly_chart(
+                        _heatmap(z01, colorscale=str(colorscale)),
+                        use_container_width=True,
+                    )
+
         with st.expander("Export"):
             params = {
                 "page": str(page),
                 "noise": str(noise_variant),
+                "warp_amp": float(warp_amp),
+                "warp_scale": float(warp_scale),
+                "warp_octaves": int(warp_octaves),
                 "seed": int(seed),
                 "scale": float(scale),
                 "octaves": int(octaves),
@@ -487,6 +595,9 @@ if page == "Explore":
             lacunarity=float(lacunarity),
             persistence=float(persistence),
             variant=str(noise_variant),
+            warp_amp=float(warp_amp),
+            warp_scale=float(warp_scale),
+            warp_octaves=int(warp_octaves),
             offset_x=float(offset_x),
             offset_y=float(offset_y),
             normalize=bool(normalize),
