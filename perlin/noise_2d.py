@@ -140,6 +140,72 @@ def fbm2(
     return total / amp_sum
 
 
+def turbulence2(
+    perlin: Perlin2D,
+    x: np.ndarray,
+    y: np.ndarray,
+    *,
+    octaves: int = 4,
+    lacunarity: float = 2.0,
+    persistence: float = 0.5,
+) -> np.ndarray:
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+
+    octaves = int(octaves)
+    lacunarity = float(lacunarity)
+    persistence = float(persistence)
+
+    amp = 1.0
+    freq = 1.0
+    total = np.zeros_like(x, dtype=np.float64)
+    amp_sum = 0.0
+
+    for _ in range(max(octaves, 1)):
+        total += amp * np.abs(perlin.noise(x * freq, y * freq))
+        amp_sum += amp
+        amp *= persistence
+        freq *= lacunarity
+
+    if amp_sum == 0.0:
+        return total
+    return total / amp_sum
+
+
+def ridged2(
+    perlin: Perlin2D,
+    x: np.ndarray,
+    y: np.ndarray,
+    *,
+    octaves: int = 4,
+    lacunarity: float = 2.0,
+    persistence: float = 0.5,
+) -> np.ndarray:
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+
+    octaves = int(octaves)
+    lacunarity = float(lacunarity)
+    persistence = float(persistence)
+
+    amp = 1.0
+    freq = 1.0
+    total = np.zeros_like(x, dtype=np.float64)
+    amp_sum = 0.0
+
+    for _ in range(max(octaves, 1)):
+        signal = 1.0 - np.abs(perlin.noise(x * freq, y * freq))
+        signal = signal * signal
+        total += amp * signal
+        amp_sum += amp
+        amp *= persistence
+        freq *= lacunarity
+
+    if amp_sum == 0.0:
+        return total
+    return total / amp_sum
+
+
 def tileable2d(
     func,
     x: np.ndarray,

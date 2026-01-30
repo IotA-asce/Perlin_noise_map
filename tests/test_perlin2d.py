@@ -1,6 +1,6 @@
 import numpy as np
 
-from perlin.noise_2d import Perlin2D, fbm2, tileable_fbm2
+from perlin.noise_2d import Perlin2D, fbm2, ridged2, tileable_fbm2, turbulence2
 from viz.step_2d import scanline_series_from_debug
 
 
@@ -138,3 +138,25 @@ def test_tileable_fbm2_periodic_in_x_and_y():
 
     assert np.allclose(z0, zx)
     assert np.allclose(z0, zy)
+
+
+def test_turbulence2_shape_finite_and_deterministic():
+    p1 = Perlin2D(seed=0)
+    p2 = Perlin2D(seed=0)
+    xg, yg = np.meshgrid(np.linspace(0, 3, 64), np.linspace(0, 3, 32))
+    z1 = turbulence2(p1, xg, yg, octaves=4, lacunarity=2.0, persistence=0.5)
+    z2 = turbulence2(p2, xg, yg, octaves=4, lacunarity=2.0, persistence=0.5)
+    assert z1.shape == xg.shape
+    assert np.isfinite(z1).all()
+    assert np.allclose(z1, z2)
+
+
+def test_ridged2_shape_finite_and_deterministic():
+    p1 = Perlin2D(seed=0)
+    p2 = Perlin2D(seed=0)
+    xg, yg = np.meshgrid(np.linspace(0, 3, 64), np.linspace(0, 3, 32))
+    z1 = ridged2(p1, xg, yg, octaves=4, lacunarity=2.0, persistence=0.5)
+    z2 = ridged2(p2, xg, yg, octaves=4, lacunarity=2.0, persistence=0.5)
+    assert z1.shape == xg.shape
+    assert np.isfinite(z1).all()
+    assert np.allclose(z1, z2)

@@ -8,7 +8,7 @@ import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 
-from perlin.noise_2d import Perlin2D, fbm2, tileable_fbm2
+from perlin.noise_2d import Perlin2D, fbm2, ridged2, tileable2d, turbulence2
 from viz.export import array_to_npy_bytes, array_to_png_bytes, heightmap_to_obj_bytes
 from viz.step_2d import (
     fade_curve_figure,
@@ -70,6 +70,11 @@ def _set_query_params(params: dict[str, str]) -> None:
 
 
 _COLOR_SCALES = ["Viridis", "Cividis", "Turbo", "IceFire", "Earth"]
+_NOISE_VARIANTS = {
+    "fbm": "fBm",
+    "turbulence": "Turbulence",
+    "ridged": "Ridged",
+}
 
 default_page = _qp_get("page", "Explore")
 if default_page not in {"Explore", "Learn"}:
@@ -95,6 +100,10 @@ default_colorscale = _qp_get("colorscale", "Viridis")
 if default_colorscale not in _COLOR_SCALES:
     default_colorscale = "Viridis"
 
+default_noise = _qp_get("noise", "fbm")
+if default_noise not in _NOISE_VARIANTS:
+    default_noise = "fbm"
+
 default_shade = _qp_get("shade", "Height")
 if default_shade not in {"Height", "Slope"}:
     default_shade = "Height"
@@ -110,6 +119,7 @@ def _noise_map(
     octaves: int,
     lacunarity: float,
     persistence: float,
+    variant: str,
     offset_x: float,
     offset_y: float,
     normalize: bool,
@@ -128,26 +138,43 @@ def _noise_map(
         ys = (np.arange(height, dtype=np.float64) / scale) + offset_y
     xg, yg = np.meshgrid(xs, ys)
 
-    if tileable:
-        z = tileable_fbm2(
-            perlin,
-            xg,
-            yg,
-            period_x=period_x,
-            period_y=period_y,
-            octaves=octaves,
-            lacunarity=lacunarity,
-            persistence=persistence,
-        )
-    else:
-        z = fbm2(
-            perlin,
-            xg,
-            yg,
-            octaves=octaves,
-            lacunarity=lacunarity,
-            persistence=persistence,
-        )
+    variant = str(variant)
+
+    def base(xx: np.ndarray, yy: np.ndarray) -> np.ndarray:
+        if variant == "fbm":
+            return fbm2(
+                perlin,
+                xx,
+                yy,
+                octaves=octaves,
+                lacunarity=lacunarity,
+                persistence=persistence,
+            )
+        if variant == "turbulence":
+            return turbulence2(
+                perlin,
+                xx,
+                yy,
+                octaves=octaves,
+                lacunarity=lacunarity,
+                persistence=persistence,
+            )
+        if variant == "ridged":
+            return ridged2(
+                perlin,
+                xx,
+                yy,
+                octaves=octaves,
+                lacunarity=lacunarity,
+                persistence=persistence,
+            )
+        raise ValueError(f"unknown variant: {variant}")
+
+    z = (
+        tileable2d(base, xg, yg, period_x=period_x, period_y=period_y)
+        if tileable
+        else base(xg, yg)
+    )
 
     if not normalize:
         return z
@@ -258,6 +285,12 @@ with st.sidebar:
 
     st.divider()
     st.header("Parameters")
+    noise_variant = st.selectbox(
+        "Noise type",
+        list(_NOISE_VARIANTS.keys()),
+        index=list(_NOISE_VARIANTS.keys()).index(default_noise),
+        format_func=lambda k: _NOISE_VARIANTS[str(k)],
+    )
     seed = st.number_input(
         "Seed",
         min_value=0,
@@ -349,6 +382,7 @@ with st.sidebar:
     st.subheader("Share")
     params_for_url = {
         "page": str(page),
+        "noise": str(noise_variant),
         "seed": str(int(seed)),
         "scale": str(float(scale)),
         "octaves": str(int(octaves)),
@@ -379,6 +413,7 @@ z01 = _noise_map(
     octaves=int(octaves),
     lacunarity=float(lacunarity),
     persistence=float(persistence),
+    variant=str(noise_variant),
     offset_x=float(offset_x),
     offset_y=float(offset_y),
     normalize=bool(normalize),
@@ -404,6 +439,7 @@ if page == "Explore":
         with st.expander("Export"):
             params = {
                 "page": str(page),
+                "noise": str(noise_variant),
                 "seed": int(seed),
                 "scale": float(scale),
                 "octaves": int(octaves),
@@ -450,6 +486,7 @@ if page == "Explore":
             octaves=int(octaves),
             lacunarity=float(lacunarity),
             persistence=float(persistence),
+            variant=str(noise_variant),
             offset_x=float(offset_x),
             offset_y=float(offset_y),
             normalize=bool(normalize),
