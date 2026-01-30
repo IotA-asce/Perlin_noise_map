@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from perlin.noise_2d import Perlin2D, fbm2
+from viz.step_2d import fade_curve_figure, perlin2d_cell_figure
 
 st.set_page_config(
     page_title="Perlin Noise Map",
@@ -176,4 +177,33 @@ else:
     px = st.slider("x", min_value=0.0, max_value=10.0, value=2.25, step=0.05)
     py = st.slider("y", min_value=0.0, max_value=10.0, value=3.75, step=0.05)
     debug = perlin.debug_point(px, py)
-    st.json(debug)
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown("**Cell + gradients**")
+        st.plotly_chart(perlin2d_cell_figure(debug), use_container_width=True)
+
+    with col_b:
+        st.markdown("**Fade curves**")
+        st.plotly_chart(
+            fade_curve_figure(t_value=float(debug["relative"]["xf"]), title="fade(x)"),
+            use_container_width=True,
+        )
+        st.plotly_chart(
+            fade_curve_figure(t_value=float(debug["relative"]["yf"]), title="fade(y)"),
+            use_container_width=True,
+        )
+
+    st.markdown("**Interpolation values**")
+    st.write(
+        {
+            "u": debug["fade"]["u"],
+            "v": debug["fade"]["v"],
+            "x_lerp0": debug["interpolation"]["x_lerp0"],
+            "x_lerp1": debug["interpolation"]["x_lerp1"],
+            "noise": debug["noise"],
+        }
+    )
+
+    with st.expander("Raw debug JSON"):
+        st.json(debug)

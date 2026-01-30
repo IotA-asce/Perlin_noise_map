@@ -32,10 +32,10 @@ Not just "generate noise", but make each mathematical decision visible: gradient
 
 ### Milestone 2: Step-by-Step Visualization (2D)
 
-- [ ] Visualize lattice/grid points and gradient vectors.
-- [ ] Visualize the dot product contributions at each corner.
-- [ ] Visualize fade curves and interpolation weights.
-- [ ] Build a "single cell inspector" that zooms into one lattice cell and shows intermediate values.
+- [x] Visualize lattice/grid points and gradient vectors.
+- [x] Visualize the dot product contributions at each corner.
+- [x] Visualize fade curves and interpolation weights.
+- [x] Build a "single cell inspector" that zooms into one lattice cell and shows intermediate values.
 - [ ] Build a "scanline animator" that shows how moving input changes contributions over time.
 
 ### Milestone 3: 2D Map Explorer

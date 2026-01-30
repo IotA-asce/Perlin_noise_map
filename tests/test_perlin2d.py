@@ -65,3 +65,15 @@ def test_perlin2d_reference_values():
         dtype=np.float64,
     )
     assert np.allclose(out, expected)
+
+
+def test_perlin2d_debug_point_matches_noise():
+    p = Perlin2D(seed=0)
+    x = 2.25
+    y = 3.75
+    dbg = p.debug_point(x, y)
+    out = float(p.noise(np.array(x), np.array(y)))
+    assert np.allclose(dbg["noise"], out)
+    assert "interpolation" in dbg
+    assert "x_lerp0" in dbg["interpolation"]
+    assert "x_lerp1" in dbg["interpolation"]

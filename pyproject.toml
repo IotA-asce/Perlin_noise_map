@@ -13,4 +13,4 @@ select = [
 "perlin/__init__.py" = ["F401"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["perlin"]
+known-first-party = ["perlin", "viz"]

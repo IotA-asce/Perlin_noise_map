@@ -100,6 +100,10 @@ class Perlin2D:
                 "c01": c01.__dict__,
                 "c11": c11.__dict__,
             },
+            "interpolation": {
+                "x_lerp0": float(x_lerp0),
+                "x_lerp1": float(x_lerp1),
+            },
             "noise": n,
         }
 
