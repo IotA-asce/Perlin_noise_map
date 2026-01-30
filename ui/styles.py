@@ -66,6 +66,18 @@ details summary {
   border-radius: 16px;
   padding: 0.85rem 1rem;
   backdrop-filter: blur(8px);
+  animation: pnFadeUp 420ms ease-out both;
+}
+
+@keyframes pnFadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .pn-title {
