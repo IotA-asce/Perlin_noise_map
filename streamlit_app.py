@@ -83,6 +83,7 @@ def _set_query_params(params: dict[str, str]) -> None:
 
 
 _COLOR_SCALES = ["Viridis", "Cividis", "Turbo", "IceFire", "Earth"]
+_QUALITY = ["Fast", "Balanced", "Full"]
 _NOISE_VARIANTS = {
     "fbm": "fBm",
     "turbulence": "Turbulence",
@@ -125,6 +126,10 @@ default_throttle_ms = _qp_int("throttle_ms", 50, min_value=10, max_value=250)
 default_colorscale = _qp_get("colorscale", "Viridis")
 if default_colorscale not in _COLOR_SCALES:
     default_colorscale = "Viridis"
+
+default_quality = _qp_get("quality", "Balanced")
+if default_quality not in _QUALITY:
+    default_quality = "Balanced"
 
 default_noise = _qp_get("noise", "fbm")
 if default_noise not in _NOISE_VARIANTS:
@@ -636,6 +641,7 @@ with st.sidebar:
         params["page"] = str(page)
         live_drag = False
         throttle_ms = 60
+        quality = str(default_quality)
     else:
         st.header("Parameters")
 
@@ -652,6 +658,13 @@ with st.sidebar:
             value=int(default_throttle_ms),
             step=10,
             help="Higher = fewer reruns while dragging.",
+        )
+
+        quality = st.selectbox(
+            "Quality",
+            _QUALITY,
+            index=_QUALITY.index(default_quality),
+            help="Uses lower resolution while dragging, then refines on release.",
         )
 
         st.divider()
@@ -709,8 +722,9 @@ with st.sidebar:
             value=int(default_seed),
             step=1,
         )
+        scale_final = True
         if live_drag:
-            scale, _scale_final = live_slider(
+            scale, scale_final = live_slider(
                 label="Scale (bigger = smoother)",
                 min_value=5.0,
                 max_value=600.0,
@@ -767,8 +781,10 @@ with st.sidebar:
         height = st.slider(
             "Height", min_value=64, max_value=1024, value=int(default_height), step=64
         )
+        ox_final = True
+        oy_final = True
         if live_drag:
-            offset_x, _ox_final = live_slider(
+            offset_x, ox_final = live_slider(
                 label="Offset X",
                 min_value=-50.0,
                 max_value=50.0,
@@ -777,7 +793,7 @@ with st.sidebar:
                 throttle_ms=int(throttle_ms),
                 key="live_offset_x",
             )
-            offset_y, _oy_final = live_slider(
+            offset_y, oy_final = live_slider(
                 label="Offset Y",
                 min_value=-50.0,
                 max_value=50.0,
@@ -816,8 +832,9 @@ with st.sidebar:
             ["Height", "Slope"],
             index=0 if default_shade == "Height" else 1,
         )
+        zs_final = True
         if live_drag:
-            z_scale, _zs_final = live_slider(
+            z_scale, zs_final = live_slider(
                 label="Height scale",
                 min_value=0.0,
                 max_value=200.0,
@@ -835,6 +852,10 @@ with st.sidebar:
                 step=5.0,
             )
 
+        is_dragging = bool(live_drag) and not (
+            scale_final and ox_final and oy_final and zs_final
+        )
+
         params = {
             "page": str(page),
             "basis": str(basis),
@@ -842,6 +863,8 @@ with st.sidebar:
             "noise": str(noise_variant),
             "live_drag": bool(live_drag),
             "throttle_ms": int(throttle_ms),
+            "quality": str(quality),
+            "is_dragging": bool(is_dragging),
             "warp_amp": float(warp_amp),
             "warp_scale": float(warp_scale),
             "warp_octaves": int(warp_octaves),
@@ -890,6 +913,10 @@ with st.sidebar:
     show_colorbar = bool(params.get("show_colorbar", default_show_colorbar))
     live_drag = bool(params.get("live_drag", False))
     throttle_ms = int(params.get("throttle_ms", 60))
+    quality = str(params.get("quality", default_quality))
+    if quality not in _QUALITY:
+        quality = "Balanced"
+    is_dragging = bool(params.get("is_dragging", False))
 
     st.divider()
     st.subheader("Share")
@@ -900,6 +927,7 @@ with st.sidebar:
         "noise": str(noise_variant),
         "live_drag": "1" if bool(live_drag) else "0",
         "throttle_ms": str(int(throttle_ms)),
+        "quality": str(quality),
         "warp_amp": str(float(warp_amp)),
         "warp_scale": str(float(warp_scale)),
         "warp_octaves": str(int(warp_octaves)),
@@ -926,13 +954,27 @@ with st.sidebar:
 
     st.code(f"?{urlencode(params_for_url)}", language="text")
 
+width_render = int(width)
+height_render = int(height)
+res3d_render = int(res3d)
+rendering_preview = False
+
+if bool(is_dragging) and str(quality) != "Full":
+    rendering_preview = True
+    max2 = 256 if str(quality) == "Fast" else 512
+    width_render = min(width_render, max2)
+    height_render = min(height_render, max2)
+
+    max3 = 96 if str(quality) == "Fast" else 160
+    res3d_render = min(res3d_render, max3)
+
 t0 = time.perf_counter()
 z01 = _noise_map(
     seed=int(seed),
     basis=str(basis),
     grad_set=str(grad2),
-    width=int(width),
-    height=int(height),
+    width=int(width_render),
+    height=int(height_render),
     scale=float(scale),
     octaves=int(octaves),
     lacunarity=float(lacunarity),
@@ -948,7 +990,7 @@ z01 = _noise_map(
 )
 t1 = time.perf_counter()
 st.session_state["perf_2d_ms"] = (t1 - t0) * 1000.0
-st.session_state["perf_2d_res"] = (int(width), int(height))
+st.session_state["perf_2d_res"] = (int(width_render), int(height_render))
 
 zmin = float(np.min(z01))
 zmax = float(np.max(z01))
@@ -973,68 +1015,89 @@ if page == "Explore":
         )
 
         with st.expander("Value probe"):
-            ix = st.slider("x index", 0, max(int(width) - 1, 0), 0, key="probe_x")
-            iy = st.slider("y index", 0, max(int(height) - 1, 0), 0, key="probe_y")
+            if rendering_preview:
+                st.caption(
+                    (
+                        f"Preview mode: probing {z01.shape[1]}x{z01.shape[0]} "
+                        "(release to refine)."
+                    )
+                )
+
+            max_x = max(int(z01.shape[1]) - 1, 0)
+            max_y = max(int(z01.shape[0]) - 1, 0)
+            ix = st.slider("x index", 0, max_x, 0, key="probe_x")
+            iy = st.slider("y index", 0, max_y, 0, key="probe_y")
             v = float(z01[int(iy), int(ix)])
             st.metric("value", f"{v:.6f}")
         if show_hist:
             st.plotly_chart(_histogram(z01), width="stretch", key="explore_hist")
 
         with st.expander("Compare: Perlin vs Value noise"):
-            perlin_z = _noise_map(
-                seed=int(seed),
-                basis="perlin",
-                grad_set=str(grad2),
-                width=int(width),
-                height=int(height),
-                scale=float(scale),
-                octaves=int(octaves),
-                lacunarity=float(lacunarity),
-                persistence=float(persistence),
-                variant=str(noise_variant),
-                warp_amp=float(warp_amp),
-                warp_scale=float(warp_scale),
-                warp_octaves=int(warp_octaves),
-                offset_x=float(offset_x),
-                offset_y=float(offset_y),
-                normalize=bool(normalize),
-                tileable=bool(tileable),
-            )
-            value_z = _noise_map(
-                seed=int(seed),
-                basis="value",
-                grad_set=str(grad2),
-                width=int(width),
-                height=int(height),
-                scale=float(scale),
-                octaves=int(octaves),
-                lacunarity=float(lacunarity),
-                persistence=float(persistence),
-                variant=str(noise_variant),
-                warp_amp=float(warp_amp),
-                warp_scale=float(warp_scale),
-                warp_octaves=int(warp_octaves),
-                offset_x=float(offset_x),
-                offset_y=float(offset_y),
-                normalize=bool(normalize),
-                tileable=bool(tileable),
-            )
+            if rendering_preview:
+                st.info("Release the slider to compute comparisons.")
+            else:
+                perlin_z = _noise_map(
+                    seed=int(seed),
+                    basis="perlin",
+                    grad_set=str(grad2),
+                    width=int(width_render),
+                    height=int(height_render),
+                    scale=float(scale),
+                    octaves=int(octaves),
+                    lacunarity=float(lacunarity),
+                    persistence=float(persistence),
+                    variant=str(noise_variant),
+                    warp_amp=float(warp_amp),
+                    warp_scale=float(warp_scale),
+                    warp_octaves=int(warp_octaves),
+                    offset_x=float(offset_x),
+                    offset_y=float(offset_y),
+                    normalize=bool(normalize),
+                    tileable=bool(tileable),
+                )
+                value_z = _noise_map(
+                    seed=int(seed),
+                    basis="value",
+                    grad_set=str(grad2),
+                    width=int(width_render),
+                    height=int(height_render),
+                    scale=float(scale),
+                    octaves=int(octaves),
+                    lacunarity=float(lacunarity),
+                    persistence=float(persistence),
+                    variant=str(noise_variant),
+                    warp_amp=float(warp_amp),
+                    warp_scale=float(warp_scale),
+                    warp_octaves=int(warp_octaves),
+                    offset_x=float(offset_x),
+                    offset_y=float(offset_y),
+                    normalize=bool(normalize),
+                    tileable=bool(tileable),
+                )
 
-            col0, col1 = st.columns(2)
-            with col0:
-                st.markdown("**Perlin (gradient)**")
-                st.plotly_chart(
-                    _heatmap(perlin_z, colorscale=str(colorscale), show_colorbar=False),
-                    width="stretch",
-                    key="compare_perlin_heatmap",
-                )
-            with col1:
-                st.markdown("**Value noise**")
-                st.plotly_chart(
-                    _heatmap(value_z, colorscale=str(colorscale), show_colorbar=False),
-                    width="stretch",
-                    key="compare_value_heatmap",
-                )
+                col0, col1 = st.columns(2)
+                with col0:
+                    st.markdown("**Perlin (gradient)**")
+                    st.plotly_chart(
+                        _heatmap(
+                            perlin_z,
+                            colorscale=str(colorscale),
+                            show_colorbar=False,
+                        ),
+                        width="stretch",
+                        key="compare_perlin_heatmap",
+                    )
+                with col1:
+                    st.markdown("**Value noise**")
+                    st.plotly_chart(
+                        _heatmap(
+                            value_z,
+                            colorscale=str(colorscale),
+                            show_colorbar=False,
+                        ),
+                        width="stretch",
+                        key="compare_value_heatmap",
+                    )
 
         if str(basis) == "perlin":
             with st.expander("Artifacts: different gradient sets"):
@@ -1047,8 +1110,8 @@ if page == "Explore":
                     seed=int(seed),
                     basis="perlin",
                     grad_set="diag8",
-                    width=int(width),
-                    height=int(height),
+                    width=int(width_render),
+                    height=int(height_render),
                     scale=float(scale),
                     octaves=int(octaves),
                     lacunarity=float(lacunarity),
@@ -1066,8 +1129,8 @@ if page == "Explore":
                     seed=int(seed),
                     basis="perlin",
                     grad_set="axis4",
-                    width=int(width),
-                    height=int(height),
+                    width=int(width_render),
+                    height=int(height_render),
                     scale=float(scale),
                     octaves=int(octaves),
                     lacunarity=float(lacunarity),
@@ -1118,8 +1181,8 @@ if page == "Explore":
                     seed=int(seed),
                     basis="perlin",
                     grad_set=str(grad2),
-                    width=int(width),
-                    height=int(height),
+                    width=int(width_render),
+                    height=int(height_render),
                     scale=float(scale),
                     octaves=int(octaves),
                     lacunarity=float(lacunarity),
@@ -1198,15 +1261,18 @@ if page == "Explore":
 
     with tab3d:
         st.subheader("3D Heightmap")
-        st.caption(f"resolution={int(res3d)}x{int(res3d)}")
+        if rendering_preview:
+            st.caption(f"resolution={int(res3d_render)}x{int(res3d_render)} (preview)")
+        else:
+            st.caption(f"resolution={int(res3d)}x{int(res3d)}")
 
         t3a = time.perf_counter()
         z3d = _noise_map(
             seed=int(seed),
             basis=str(basis),
             grad_set=str(grad2),
-            width=int(res3d),
-            height=int(res3d),
+            width=int(res3d_render),
+            height=int(res3d_render),
             scale=float(scale),
             octaves=int(octaves),
             lacunarity=float(lacunarity),
@@ -1222,7 +1288,7 @@ if page == "Explore":
         )
         t3b = time.perf_counter()
         st.session_state["perf_3d_ms"] = (t3b - t3a) * 1000.0
-        st.session_state["perf_3d_res"] = (int(res3d), int(res3d))
+        st.session_state["perf_3d_res"] = (int(res3d_render), int(res3d_render))
         surfacecolor = _slope01(z3d) if shade_mode == "Slope" else None
         z3_min = float(np.min(z3d))
         z3_max = float(np.max(z3d))
