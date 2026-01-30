@@ -117,6 +117,8 @@ default_res3d = _qp_int("res3d", 128, min_value=64, max_value=256)
 default_normalize = _qp_bool("normalize", True)
 default_tileable = _qp_bool("tileable", False)
 default_show_hist = _qp_bool("show_hist", False)
+default_live_drag = _qp_bool("live_drag", True)
+default_throttle_ms = _qp_int("throttle_ms", 50, min_value=10, max_value=250)
 
 default_colorscale = _qp_get("colorscale", "Viridis")
 if default_colorscale not in _COLOR_SCALES:
@@ -622,8 +624,27 @@ with st.sidebar:
 
         params = dict(st.session_state["applied_params"])
         params["page"] = str(page)
+        live_drag = False
+        throttle_ms = 60
     else:
         st.header("Parameters")
+
+        st.subheader("Live preview")
+        live_drag = st.toggle(
+            "Update while dragging",
+            value=bool(default_live_drag),
+            help="Uses a custom slider that emits values continuously.",
+        )
+        throttle_ms = st.slider(
+            "Drag throttle (ms)",
+            min_value=10,
+            max_value=250,
+            value=int(default_throttle_ms),
+            step=10,
+            help="Higher = fewer reruns while dragging.",
+        )
+
+        st.divider()
         basis = st.selectbox(
             "Basis",
             list(_BASES.keys()),
@@ -678,15 +699,23 @@ with st.sidebar:
             value=int(default_seed),
             step=1,
         )
-        scale, _scale_final = live_slider(
-            label="Scale (bigger = smoother)",
-            min_value=5.0,
-            max_value=600.0,
-            value=float(default_scale),
-            step=1.0,
-            throttle_ms=50,
-            key="live_scale",
-        )
+        if live_drag:
+            scale, _scale_final = live_slider(
+                label="Scale (bigger = smoother)",
+                min_value=5.0,
+                max_value=600.0,
+                value=float(default_scale),
+                step=1.0,
+                throttle_ms=int(throttle_ms),
+                key="live_scale",
+            )
+        else:
+            scale = st.slider(
+                "Scale (bigger = smoother)",
+                min_value=5.0,
+                max_value=600.0,
+                value=float(default_scale),
+            )
         octaves = st.slider(
             "Octaves", min_value=1, max_value=10, value=int(default_octaves)
         )
@@ -724,24 +753,40 @@ with st.sidebar:
         height = st.slider(
             "Height", min_value=64, max_value=1024, value=int(default_height), step=64
         )
-        offset_x, _ox_final = live_slider(
-            label="Offset X",
-            min_value=-50.0,
-            max_value=50.0,
-            value=float(default_offset_x),
-            step=0.1,
-            throttle_ms=50,
-            key="live_offset_x",
-        )
-        offset_y, _oy_final = live_slider(
-            label="Offset Y",
-            min_value=-50.0,
-            max_value=50.0,
-            value=float(default_offset_y),
-            step=0.1,
-            throttle_ms=50,
-            key="live_offset_y",
-        )
+        if live_drag:
+            offset_x, _ox_final = live_slider(
+                label="Offset X",
+                min_value=-50.0,
+                max_value=50.0,
+                value=float(default_offset_x),
+                step=0.1,
+                throttle_ms=int(throttle_ms),
+                key="live_offset_x",
+            )
+            offset_y, _oy_final = live_slider(
+                label="Offset Y",
+                min_value=-50.0,
+                max_value=50.0,
+                value=float(default_offset_y),
+                step=0.1,
+                throttle_ms=int(throttle_ms),
+                key="live_offset_y",
+            )
+        else:
+            offset_x = st.slider(
+                "Offset X",
+                min_value=-50.0,
+                max_value=50.0,
+                value=float(default_offset_x),
+                step=0.5,
+            )
+            offset_y = st.slider(
+                "Offset Y",
+                min_value=-50.0,
+                max_value=50.0,
+                value=float(default_offset_y),
+                step=0.5,
+            )
 
         st.divider()
         st.subheader("3D")
@@ -757,21 +802,32 @@ with st.sidebar:
             ["Height", "Slope"],
             index=0 if default_shade == "Height" else 1,
         )
-        z_scale, _zs_final = live_slider(
-            label="Height scale",
-            min_value=0.0,
-            max_value=200.0,
-            value=float(default_z_scale),
-            step=1.0,
-            throttle_ms=50,
-            key="live_z_scale",
-        )
+        if live_drag:
+            z_scale, _zs_final = live_slider(
+                label="Height scale",
+                min_value=0.0,
+                max_value=200.0,
+                value=float(default_z_scale),
+                step=1.0,
+                throttle_ms=int(throttle_ms),
+                key="live_z_scale",
+            )
+        else:
+            z_scale = st.slider(
+                "Height scale",
+                min_value=0.0,
+                max_value=200.0,
+                value=float(default_z_scale),
+                step=5.0,
+            )
 
         params = {
             "page": str(page),
             "basis": str(basis),
             "grad2": str(grad2),
             "noise": str(noise_variant),
+            "live_drag": bool(live_drag),
+            "throttle_ms": int(throttle_ms),
             "warp_amp": float(warp_amp),
             "warp_scale": float(warp_scale),
             "warp_octaves": int(warp_octaves),
@@ -816,6 +872,8 @@ with st.sidebar:
     tileable = bool(params["tileable"])
     colorscale = str(params["colorscale"])
     show_hist = bool(params["show_hist"])
+    live_drag = bool(params.get("live_drag", False))
+    throttle_ms = int(params.get("throttle_ms", 60))
 
     st.divider()
     st.subheader("Share")
@@ -824,6 +882,8 @@ with st.sidebar:
         "basis": str(basis),
         "grad2": str(grad2),
         "noise": str(noise_variant),
+        "live_drag": "1" if bool(live_drag) else "0",
+        "throttle_ms": str(int(throttle_ms)),
         "warp_amp": str(float(warp_amp)),
         "warp_scale": str(float(warp_scale)),
         "warp_octaves": str(int(warp_octaves)),
