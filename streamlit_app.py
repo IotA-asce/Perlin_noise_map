@@ -18,6 +18,7 @@ from perlin.noise_2d import (
     turbulence2,
 )
 from perlin.value_noise_2d import ValueNoise2D
+from st_components.hotkeys import hotkeys
 from st_components.live_slider import live_slider
 from ui.styles import inject_global_styles
 from viz.export import array_to_npy_bytes, array_to_png_bytes, heightmap_to_obj_bytes
@@ -120,6 +121,7 @@ default_normalize = _qp_bool("normalize", True)
 default_tileable = _qp_bool("tileable", False)
 default_show_hist = _qp_bool("show_hist", False)
 default_show_colorbar = _qp_bool("show_colorbar", False)
+default_show3d = _qp_bool("show3d", True)
 default_live_drag = _qp_bool("live_drag", True)
 default_throttle_ms = _qp_int("throttle_ms", 50, min_value=10, max_value=250)
 
@@ -496,6 +498,7 @@ with st.sidebar:
         "z_scale": float(default_z_scale),
         "res3d": int(default_res3d),
         "shade": str(default_shade),
+        "show3d": bool(default_show3d),
         "normalize": bool(default_normalize),
         "tileable": bool(default_tileable),
         "colorscale": str(default_colorscale),
@@ -644,6 +647,10 @@ with st.sidebar:
 
             st.divider()
             st.subheader("3D")
+            show3d = st.toggle(
+                "Enable 3D view",
+                value=bool(applied.get("show3d", default_show3d)),
+            )
             res3d = st.slider(
                 "3D resolution",
                 min_value=64,
@@ -691,6 +698,7 @@ with st.sidebar:
                 "z_scale": float(z_scale),
                 "res3d": int(res3d),
                 "shade": str(shade_mode),
+                "show3d": bool(show3d),
                 "normalize": bool(normalize),
                 "tileable": bool(tileable),
                 "colorscale": str(colorscale),
@@ -881,6 +889,10 @@ with st.sidebar:
 
         st.divider()
         st.subheader("3D")
+        show3d = st.toggle(
+            "Enable 3D view",
+            value=bool(default_show3d),
+        )
         res3d = st.slider(
             "3D resolution",
             min_value=64,
@@ -941,6 +953,7 @@ with st.sidebar:
             "z_scale": float(z_scale),
             "res3d": int(res3d),
             "shade": str(shade_mode),
+            "show3d": bool(show3d),
             "normalize": bool(normalize),
             "tileable": bool(tileable),
             "colorscale": str(colorscale),
@@ -978,6 +991,7 @@ with st.sidebar:
     if quality not in _QUALITY:
         quality = "Balanced"
     is_dragging = bool(params.get("is_dragging", False))
+    show3d = bool(params.get("show3d", default_show3d))
 
     st.divider()
     st.subheader("Share")
@@ -1004,6 +1018,7 @@ with st.sidebar:
         "z_scale": str(float(z_scale)),
         "res3d": str(int(res3d)),
         "shade": str(shade_mode),
+        "show3d": "1" if bool(show3d) else "0",
         "normalize": "1" if bool(normalize) else "0",
         "tileable": "1" if bool(tileable) else "0",
         "colorscale": str(colorscale),
@@ -1070,6 +1085,73 @@ with st.sidebar:
             if st.button("Delete", use_container_width=True):
                 del st.session_state["snapshots"][int(snap_idx)]
                 st.rerun()
+
+hk = hotkeys(
+    enabled=True,
+    allowed=["r", "0", "h", "c", "t", "3", "p", "l"],
+    key="hotkeys",
+)
+
+if isinstance(hk, dict) and "ts" in hk:
+    ts = int(hk.get("ts", 0))
+    if ts and ts != int(st.session_state.get("hotkey_ts", 0)):
+        st.session_state["hotkey_ts"] = ts
+        k = str(hk.get("key", ""))
+
+        new = dict(params_for_url)
+
+        if k == "r":
+            new["seed"] = str(np.random.default_rng().integers(0, 2**31 - 1))
+        elif k == "0":
+            new = {
+                "page": "Explore",
+                "basis": "perlin",
+                "grad2": "diag8",
+                "noise": "fbm",
+                "warp_amp": "1.25",
+                "warp_scale": "1.5",
+                "warp_octaves": "2",
+                "seed": "0",
+                "scale": "120.0",
+                "octaves": "4",
+                "lacunarity": "2.0",
+                "persistence": "0.5",
+                "width": "256",
+                "height": "256",
+                "offset_x": "0.0",
+                "offset_y": "0.0",
+                "z_scale": "80.0",
+                "res3d": "128",
+                "shade": "Height",
+                "show3d": "1",
+                "normalize": "1",
+                "tileable": "0",
+                "colorscale": "Viridis",
+                "show_colorbar": "0",
+                "show_hist": "0",
+                "live_drag": "1",
+                "throttle_ms": "50",
+                "quality": "Balanced",
+            }
+        elif k == "h":
+            new["show_hist"] = "0" if bool(show_hist) else "1"
+        elif k == "c":
+            new["show_colorbar"] = "0" if bool(show_colorbar) else "1"
+        elif k == "t":
+            new["tileable"] = "0" if bool(tileable) else "1"
+        elif k == "3":
+            new["show3d"] = "0" if bool(show3d) else "1"
+        elif k == "p":
+            new["page"] = "Learn" if str(page) == "Explore" else "Explore"
+        elif k == "l":
+            new["live_drag"] = "0" if bool(live_drag) else "1"
+
+        if update_mode == "Apply":
+            st.session_state.pop("applied_params", None)
+
+        _set_query_params(new)
+        st.rerun()
+
 
 width_render = int(width)
 height_render = int(height)
@@ -1605,69 +1687,76 @@ if page == "Explore":
             )
 
     with tab3d:
-        st.subheader("3D Heightmap")
-        if rendering_preview:
-            st.caption(f"resolution={int(res3d_render)}x{int(res3d_render)} (preview)")
+        if not show3d:
+            st.subheader("3D Heightmap")
+            st.info("3D is disabled (toggle 'Enable 3D view' in the sidebar).")
         else:
-            st.caption(f"resolution={int(res3d)}x{int(res3d)}")
+            st.subheader("3D Heightmap")
+            if rendering_preview:
+                st.caption(
+                    f"resolution={int(res3d_render)}x{int(res3d_render)} (preview)"
+                )
+            else:
+                st.caption(f"resolution={int(res3d)}x{int(res3d)}")
 
-        t3a = time.perf_counter()
-        z3d = _noise_map(
-            seed=int(seed),
-            basis=str(basis),
-            grad_set=str(grad2),
-            width=int(res3d_render),
-            height=int(res3d_render),
-            scale=float(scale),
-            octaves=int(octaves),
-            lacunarity=float(lacunarity),
-            persistence=float(persistence),
-            variant=str(noise_variant),
-            warp_amp=float(warp_amp),
-            warp_scale=float(warp_scale),
-            warp_octaves=int(warp_octaves),
-            offset_x=float(offset_x),
-            offset_y=float(offset_y),
-            normalize=bool(normalize),
-            tileable=bool(tileable),
-        )
-        t3b = time.perf_counter()
-        st.session_state["perf_3d_ms"] = (t3b - t3a) * 1000.0
-        st.session_state["perf_3d_res"] = (int(res3d_render), int(res3d_render))
-        surfacecolor = _slope01(z3d) if shade_mode == "Slope" else None
-        z3_min = float(np.min(z3d))
-        z3_max = float(np.max(z3d))
-        z3_mean = float(np.mean(z3d))
-        z3_std = float(np.std(z3d))
-        c0, c1, c2, c3 = st.columns(4)
-        c0.metric("min", f"{z3_min:.4f}")
-        c1.metric("max", f"{z3_max:.4f}")
-        c2.metric("mean", f"{z3_mean:.4f}")
-        c3.metric("std", f"{z3_std:.4f}")
-        st.plotly_chart(
-            _surface(
-                z3d,
-                z_scale=float(z_scale),
-                colorscale=str(colorscale),
-                surfacecolor=surfacecolor,
-            ),
-            width="stretch",
-            key="explore_surface",
-        )
+            t3a = time.perf_counter()
+            z3d = _noise_map(
+                seed=int(seed),
+                basis=str(basis),
+                grad_set=str(grad2),
+                width=int(res3d_render),
+                height=int(res3d_render),
+                scale=float(scale),
+                octaves=int(octaves),
+                lacunarity=float(lacunarity),
+                persistence=float(persistence),
+                variant=str(noise_variant),
+                warp_amp=float(warp_amp),
+                warp_scale=float(warp_scale),
+                warp_octaves=int(warp_octaves),
+                offset_x=float(offset_x),
+                offset_y=float(offset_y),
+                normalize=bool(normalize),
+                tileable=bool(tileable),
+            )
+            t3b = time.perf_counter()
+            st.session_state["perf_3d_ms"] = (t3b - t3a) * 1000.0
+            st.session_state["perf_3d_res"] = (int(res3d_render), int(res3d_render))
 
-        with st.expander("Export 3D"):
-            st.download_button(
-                "Download mesh (OBJ)",
-                data=heightmap_to_obj_bytes(z3d, z_scale=float(z_scale)),
-                file_name="terrain.obj",
-                mime="text/plain",
+            surfacecolor = _slope01(z3d) if shade_mode == "Slope" else None
+            z3_min = float(np.min(z3d))
+            z3_max = float(np.max(z3d))
+            z3_mean = float(np.mean(z3d))
+            z3_std = float(np.std(z3d))
+            c0, c1, c2, c3 = st.columns(4)
+            c0.metric("min", f"{z3_min:.4f}")
+            c1.metric("max", f"{z3_max:.4f}")
+            c2.metric("mean", f"{z3_mean:.4f}")
+            c3.metric("std", f"{z3_std:.4f}")
+            st.plotly_chart(
+                _surface(
+                    z3d,
+                    z_scale=float(z_scale),
+                    colorscale=str(colorscale),
+                    surfacecolor=surfacecolor,
+                ),
+                width="stretch",
+                key="explore_surface",
             )
-            st.download_button(
-                "Download heightmap (.npy)",
-                data=array_to_npy_bytes(z3d),
-                file_name="heightmap.npy",
-                mime="application/octet-stream",
-            )
+
+            with st.expander("Export 3D"):
+                st.download_button(
+                    "Download mesh (OBJ)",
+                    data=heightmap_to_obj_bytes(z3d, z_scale=float(z_scale)),
+                    file_name="terrain.obj",
+                    mime="text/plain",
+                )
+                st.download_button(
+                    "Download heightmap (.npy)",
+                    data=array_to_npy_bytes(z3d),
+                    file_name="heightmap.npy",
+                    mime="application/octet-stream",
+                )
 else:
     st.subheader("Learn: Perlin Noise (2D)")
     st.caption("Pick a point inside a lattice cell and inspect each intermediate step.")
