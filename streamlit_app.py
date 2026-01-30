@@ -103,8 +103,8 @@ default_scale = _qp_float("scale", 120.0, min_value=5.0, max_value=600.0)
 default_octaves = _qp_int("octaves", 4, min_value=1, max_value=10)
 default_lacunarity = _qp_float("lacunarity", 2.0, min_value=1.0, max_value=4.0)
 default_persistence = _qp_float("persistence", 0.5, min_value=0.0, max_value=1.0)
-default_width = _qp_int("width", 256, min_value=64, max_value=512)
-default_height = _qp_int("height", 256, min_value=64, max_value=512)
+default_width = _qp_int("width", 256, min_value=64, max_value=1024)
+default_height = _qp_int("height", 256, min_value=64, max_value=1024)
 default_offset_x = _qp_float("offset_x", 0.0, min_value=-50.0, max_value=50.0)
 default_offset_y = _qp_float("offset_y", 0.0, min_value=-50.0, max_value=50.0)
 default_z_scale = _qp_float("z_scale", 80.0, min_value=0.0, max_value=200.0)
@@ -436,10 +436,10 @@ with st.sidebar:
     st.divider()
     st.subheader("Viewport")
     width = st.slider(
-        "Width", min_value=64, max_value=512, value=int(default_width), step=32
+        "Width", min_value=64, max_value=1024, value=int(default_width), step=64
     )
     height = st.slider(
-        "Height", min_value=64, max_value=512, value=int(default_height), step=32
+        "Height", min_value=64, max_value=1024, value=int(default_height), step=64
     )
     offset_x = st.slider(
         "Offset X",

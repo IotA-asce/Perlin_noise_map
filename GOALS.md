@@ -61,8 +61,8 @@ Not just "generate noise", but make each mathematical decision visible: gradient
 
 ## Performance Targets
 
-- [ ] 2D: interactive at typical sizes (e.g., 256x256 to 1024x1024) with responsive UI.
-- [ ] 3D: "feels real-time" for moderate grids (e.g., 128x128 to 256x256) with smooth camera interaction.
+- [x] 2D: interactive at typical sizes (e.g., 256x256 to 1024x1024) with responsive UI.
+- [x] 3D: "feels real-time" for moderate grids (e.g., 128x128 to 256x256) with smooth camera interaction.
 
 ## Non-Goals (For Now)
 
