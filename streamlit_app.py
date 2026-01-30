@@ -1035,6 +1035,42 @@ with st.sidebar:
         _set_query_params(new_params)
         st.rerun()
 
+    st.divider()
+    st.subheader("Snapshots")
+    st.caption("Save/restore parameter sets for this session.")
+
+    if "snapshots" not in st.session_state:
+        st.session_state["snapshots"] = []
+
+    snap_name = st.text_input("Name", value="", placeholder="e.g. My terrain")
+    if st.button("Save snapshot", use_container_width=True):
+        name = snap_name.strip() or f"Snapshot {len(st.session_state['snapshots']) + 1}"
+        st.session_state["snapshots"].append(
+            {"name": name, "params": dict(params_for_url)}
+        )
+        st.rerun()
+
+    if st.session_state["snapshots"]:
+        snap_idx = st.selectbox(
+            "",
+            list(range(len(st.session_state["snapshots"]))),
+            format_func=lambda i: st.session_state["snapshots"][int(i)]["name"],
+            label_visibility="collapsed",
+        )
+        cols = st.columns(2)
+        with cols[0]:
+            if st.button("Load", use_container_width=True):
+                if update_mode == "Apply":
+                    st.session_state.pop("applied_params", None)
+                _set_query_params(
+                    st.session_state["snapshots"][int(snap_idx)]["params"]
+                )
+                st.rerun()
+        with cols[1]:
+            if st.button("Delete", use_container_width=True):
+                del st.session_state["snapshots"][int(snap_idx)]
+                st.rerun()
+
 width_render = int(width)
 height_render = int(height)
 res3d_render = int(res3d)
