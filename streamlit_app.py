@@ -17,6 +17,7 @@ from perlin.noise_2d import (
     turbulence2,
 )
 from perlin.value_noise_2d import ValueNoise2D
+from st_components.live_slider import live_slider
 from ui.styles import inject_global_styles
 from viz.export import array_to_npy_bytes, array_to_png_bytes, heightmap_to_obj_bytes
 from viz.step_2d import (
@@ -677,11 +678,14 @@ with st.sidebar:
             value=int(default_seed),
             step=1,
         )
-        scale = st.slider(
-            "Scale (bigger = smoother)",
+        scale, _scale_final = live_slider(
+            label="Scale (bigger = smoother)",
             min_value=5.0,
             max_value=600.0,
             value=float(default_scale),
+            step=1.0,
+            throttle_ms=50,
+            key="live_scale",
         )
         octaves = st.slider(
             "Octaves", min_value=1, max_value=10, value=int(default_octaves)
@@ -720,19 +724,23 @@ with st.sidebar:
         height = st.slider(
             "Height", min_value=64, max_value=1024, value=int(default_height), step=64
         )
-        offset_x = st.slider(
-            "Offset X",
+        offset_x, _ox_final = live_slider(
+            label="Offset X",
             min_value=-50.0,
             max_value=50.0,
             value=float(default_offset_x),
-            step=0.5,
+            step=0.1,
+            throttle_ms=50,
+            key="live_offset_x",
         )
-        offset_y = st.slider(
-            "Offset Y",
+        offset_y, _oy_final = live_slider(
+            label="Offset Y",
             min_value=-50.0,
             max_value=50.0,
             value=float(default_offset_y),
-            step=0.5,
+            step=0.1,
+            throttle_ms=50,
+            key="live_offset_y",
         )
 
         st.divider()
@@ -749,12 +757,14 @@ with st.sidebar:
             ["Height", "Slope"],
             index=0 if default_shade == "Height" else 1,
         )
-        z_scale = st.slider(
-            "Height scale",
+        z_scale, _zs_final = live_slider(
+            label="Height scale",
             min_value=0.0,
             max_value=200.0,
             value=float(default_z_scale),
-            step=5.0,
+            step=1.0,
+            throttle_ms=50,
+            key="live_z_scale",
         )
 
         params = {

@@ -9,6 +9,10 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 
+# Node
+**/node_modules/
+**/.vite/
+
 # Streamlit
 .streamlit/*
 !.streamlit/config.toml
