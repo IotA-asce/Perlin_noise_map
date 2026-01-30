@@ -10,7 +10,8 @@ __pycache__/
 .mypy_cache/
 
 # Streamlit
-.streamlit/
+.streamlit/*
+!.streamlit/config.toml
 
 # Editors
 .vscode/

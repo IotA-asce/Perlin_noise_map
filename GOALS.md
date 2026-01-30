@@ -61,7 +61,7 @@ Not just "generate noise", but make each mathematical decision visible: gradient
 
 ## UI Enhancements (Backlog)
 
-- [ ] Establish a cohesive visual theme (typography, spacing scale, colors, surfaces, shadows).
+- [x] Establish a cohesive visual theme (typography, spacing scale, colors, surfaces, shadows).
 - [ ] Add a modern app layout with a persistent header, compact sidebar, and clear section hierarchy.
 - [ ] Create a "Live preview" mode that updates maps continuously while adjusting controls (with throttling).
 - [ ] Add a "Apply" / "Pause updates" mode for heavy configs (batch updates via form) as a performance escape hatch.

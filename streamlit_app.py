@@ -17,6 +17,7 @@ from perlin.noise_2d import (
     turbulence2,
 )
 from perlin.value_noise_2d import ValueNoise2D
+from ui.styles import inject_global_styles
 from viz.export import array_to_npy_bytes, array_to_png_bytes, heightmap_to_obj_bytes
 from viz.step_2d import (
     fade_curve_figure,
@@ -31,6 +32,8 @@ st.set_page_config(
     page_icon="~",
     layout="wide",
 )
+
+inject_global_styles()
 
 
 def _qp_get(name: str, default: str) -> str:
