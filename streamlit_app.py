@@ -85,6 +85,7 @@ default_height = _qp_int("height", 256, min_value=64, max_value=512)
 default_offset_x = _qp_float("offset_x", 0.0, min_value=-50.0, max_value=50.0)
 default_offset_y = _qp_float("offset_y", 0.0, min_value=-50.0, max_value=50.0)
 default_z_scale = _qp_float("z_scale", 80.0, min_value=0.0, max_value=200.0)
+default_res3d = _qp_int("res3d", 128, min_value=64, max_value=256)
 
 default_normalize = _qp_bool("normalize", True)
 default_tileable = _qp_bool("tileable", False)
@@ -93,6 +94,10 @@ default_show_hist = _qp_bool("show_hist", False)
 default_colorscale = _qp_get("colorscale", "Viridis")
 if default_colorscale not in _COLOR_SCALES:
     default_colorscale = "Viridis"
+
+default_shade = _qp_get("shade", "Height")
+if default_shade not in {"Height", "Slope"}:
+    default_shade = "Height"
 
 
 @st.cache_data(show_spinner=False)
@@ -181,11 +186,18 @@ def _heatmap(z: np.ndarray, *, colorscale: str) -> go.Figure:
     return fig
 
 
-def _surface(z: np.ndarray, *, z_scale: float, colorscale: str) -> go.Figure:
+def _surface(
+    z: np.ndarray,
+    *,
+    z_scale: float,
+    colorscale: str,
+    surfacecolor: np.ndarray | None = None,
+) -> go.Figure:
     fig = go.Figure(
         data=go.Surface(
             z=z * z_scale,
             colorscale=colorscale,
+            surfacecolor=surfacecolor,
             showscale=False,
         )
     )
@@ -200,6 +212,17 @@ def _surface(z: np.ndarray, *, z_scale: float, colorscale: str) -> go.Figure:
         ),
     )
     return fig
+
+
+def _slope01(z: np.ndarray) -> np.ndarray:
+    z = np.asarray(z, dtype=np.float64)
+    dzdy, dzdx = np.gradient(z)
+    s = np.sqrt(dzdx * dzdx + dzdy * dzdy)
+    smin = float(np.min(s))
+    smax = float(np.max(s))
+    if smax == smin:
+        return np.zeros_like(s)
+    return (s - smin) / (smax - smin)
 
 
 def _histogram(z: np.ndarray) -> go.Figure:
@@ -302,6 +325,18 @@ with st.sidebar:
 
     st.divider()
     st.subheader("3D")
+    res3d = st.slider(
+        "3D resolution",
+        min_value=64,
+        max_value=256,
+        value=int(default_res3d),
+        step=32,
+    )
+    shade_mode = st.selectbox(
+        "Shading",
+        ["Height", "Slope"],
+        index=0 if default_shade == "Height" else 1,
+    )
     z_scale = st.slider(
         "Height scale",
         min_value=0.0,
@@ -324,6 +359,8 @@ with st.sidebar:
         "offset_x": str(float(offset_x)),
         "offset_y": str(float(offset_y)),
         "z_scale": str(float(z_scale)),
+        "res3d": str(int(res3d)),
+        "shade": str(shade_mode),
         "normalize": "1" if bool(normalize) else "0",
         "tileable": "1" if bool(tileable) else "0",
         "colorscale": str(colorscale),
@@ -366,6 +403,7 @@ if page == "Explore":
 
         with st.expander("Export"):
             params = {
+                "page": str(page),
                 "seed": int(seed),
                 "scale": float(scale),
                 "octaves": int(octaves),
@@ -378,6 +416,10 @@ if page == "Explore":
                 "normalize": bool(normalize),
                 "tileable": bool(tileable),
                 "colorscale": str(colorscale),
+                "show_hist": bool(show_hist),
+                "res3d": int(res3d),
+                "shade": str(shade_mode),
+                "z_scale": float(z_scale),
             }
             st.download_button(
                 "Download PNG (grayscale)",
@@ -398,8 +440,29 @@ if page == "Explore":
 
     with tab3d:
         st.subheader("3D Heightmap")
+        st.caption(f"resolution={int(res3d)}x{int(res3d)}")
+
+        z3d = _noise_map(
+            seed=int(seed),
+            width=int(res3d),
+            height=int(res3d),
+            scale=float(scale),
+            octaves=int(octaves),
+            lacunarity=float(lacunarity),
+            persistence=float(persistence),
+            offset_x=float(offset_x),
+            offset_y=float(offset_y),
+            normalize=bool(normalize),
+            tileable=bool(tileable),
+        )
+        surfacecolor = _slope01(z3d) if shade_mode == "Slope" else None
         st.plotly_chart(
-            _surface(z01, z_scale=float(z_scale), colorscale=str(colorscale)),
+            _surface(
+                z3d,
+                z_scale=float(z_scale),
+                colorscale=str(colorscale),
+                surfacecolor=surfacecolor,
+            ),
             use_container_width=True,
         )
 else:

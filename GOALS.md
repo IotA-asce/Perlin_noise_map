@@ -47,9 +47,9 @@ Not just "generate noise", but make each mathematical decision visible: gradient
 
 ### Milestone 4: Real-Time 3D Terrain
 
-- [ ] Render a heightmap surface with interactive camera controls (rotate/zoom/pan).
-- [ ] Real-time parameter updates without sluggishness (caching, downsample/LOD, incremental updates).
-- [ ] Optional shading modes: flat, smooth, slope/curvature based coloring.
+- [x] Render a heightmap surface with interactive camera controls (rotate/zoom/pan).
+- [x] Real-time parameter updates without sluggishness (caching, downsample/LOD, incremental updates).
+- [x] Optional shading modes: flat, smooth, slope/curvature based coloring.
 - [ ] Export: mesh (OBJ/PLY) or heightmap for external tools.
 
 ### Milestone 5: Beyond Basic Perlin
