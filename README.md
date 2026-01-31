@@ -28,7 +28,7 @@ Project goals and roadmap live in `GOALS.md`.
 - Lighting: hillshade with azimuth/altitude controls.
 - Hydrology: D8 flow direction + flow accumulation, rivers, river carving, depression-filled lakes.
 - Weathering: thermal erosion + simple hydraulic erosion.
-- Weathering animation: playback + scrubber for erosion steps.
+- Weathering animation: playback + scrubber for thermal/hydraulic and combined sequences.
 - Endless navigation: chunked generation, WASD/buttons movement, teleport, “go to chunk”.
 - Chunk cache: in-session LRU caching with hit/miss counters.
 - Optional “Fast” backend: float32 storage for quicker interaction.
@@ -52,11 +52,10 @@ Thermal erosion animation:
 
 ![Thermal erosion animation](assets/thermal_erosion.gif)
 
-- Step-by-step visualization of how Perlin noise is generated (grid, gradient vectors, dot products, fade curve, interpolation).
-- 2D noise map explorer (seed, scale, octaves, lacunarity, persistence, tiling).
-- 3D heightmap rendered in real time with interactivity (rotate/zoom, parameter sliders, performant updates).
-- Variants and extensions: Improved Perlin (2002), fBm, turbulence, ridged noise, domain warping, tileable/seamless noise.
-- Clear docs and references so the implementation is explainable, not just "it works".
+## Notes
+
+- Default viewport is `1024x1024`.
+- If the Practical weathering animation feels slow, reduce the animation resolution.
 
 ## Quickstart
 

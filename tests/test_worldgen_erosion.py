@@ -69,6 +69,13 @@ def test_thermal_erosion_frames_shape() -> None:
     assert float(np.max(frames)) <= 1.0
 
 
+def test_thermal_erosion_frames_includes_initial_and_handles_zero_iters() -> None:
+    z = np.zeros((8, 9), dtype=np.float64)
+    frames = thermal_erosion_frames(z, iterations=0, every=5)
+    assert frames.shape == (1, 8, 9)
+    assert np.allclose(frames[0], z)
+
+
 def test_hydraulic_erosion_frames_shape() -> None:
     rng = np.random.default_rng(6)
     z = rng.random((18, 18), dtype=np.float64)
@@ -80,3 +87,14 @@ def test_hydraulic_erosion_frames_shape() -> None:
     assert float(np.max(hf)) <= 1.0
     assert float(np.min(wf)) >= 0.0
     assert float(np.min(sf)) >= 0.0
+
+
+def test_hydraulic_erosion_frames_includes_initial_and_handles_zero_iters() -> None:
+    z = np.ones((7, 7), dtype=np.float64) * 0.5
+    hf, wf, sf = hydraulic_erosion_frames(z, iterations=0, every=10)
+    assert hf.shape == (1, 7, 7)
+    assert wf.shape == hf.shape
+    assert sf.shape == hf.shape
+    assert np.allclose(hf[0], z)
+    assert float(np.max(wf)) == 0.0
+    assert float(np.max(sf)) == 0.0

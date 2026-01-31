@@ -29,7 +29,6 @@ from worldgen.climate import apply_climate_palette, climate_biome_map
 from worldgen.contours import apply_mask_overlay, contour_mask
 from worldgen.erosion import (
     hydraulic_erosion_frames,
-    thermal_erosion,
     thermal_erosion_frames,
 )
 from worldgen.paths import astar_path
@@ -193,8 +192,8 @@ default_scale = _qp_float("scale", 120.0, min_value=5.0, max_value=600.0)
 default_octaves = _qp_int("octaves", 4, min_value=1, max_value=10)
 default_lacunarity = _qp_float("lacunarity", 2.0, min_value=1.0, max_value=4.0)
 default_persistence = _qp_float("persistence", 0.5, min_value=0.0, max_value=1.0)
-default_width = _qp_int("width", 256, min_value=64, max_value=1024)
-default_height = _qp_int("height", 256, min_value=64, max_value=1024)
+default_width = _qp_int("width", 1024, min_value=64, max_value=1024)
+default_height = _qp_int("height", 1024, min_value=64, max_value=1024)
 default_offset_x = _qp_float("offset_x", 0.0, min_value=-50.0, max_value=50.0)
 default_offset_y = _qp_float("offset_y", 0.0, min_value=-50.0, max_value=50.0)
 default_z_scale = _qp_float("z_scale", 80.0, min_value=0.0, max_value=200.0)
@@ -3660,6 +3659,17 @@ elif page == "Practical":
 
             st.divider()
             st.markdown("**Animation**")
+            anim_opts = sorted({128, 256, 384, 512, int(height_render)})
+            anim_default = (
+                256 if 256 in anim_opts else anim_opts[min(1, len(anim_opts) - 1)]
+            )
+            anim_res = st.selectbox(
+                "Resolution",
+                anim_opts,
+                index=int(anim_opts.index(anim_default)),
+                help="Animation uses a downsampled grid for responsiveness.",
+                key="anim_res",
+            )
             max_frames = st.slider(
                 "Max frames",
                 min_value=10,
@@ -3677,18 +3687,27 @@ elif page == "Practical":
                 key="anim_fps",
             )
 
-            modes = []
-            if bool(pp.get("erosion", False)):
-                modes.append("Thermal")
-            if bool(pp.get("hydraulic", False)):
-                modes.append("Hydraulic")
+            modes = ["Thermal", "Hydraulic", "Thermal + Hydraulic"]
+            if (
+                "anim_mode" in st.session_state
+                and str(st.session_state["anim_mode"]) not in modes
+            ):
+                st.session_state["anim_mode"] = modes[0]
             mode = st.selectbox("Mode", modes, key="anim_mode")
+
+            base_anim = np.asarray(base01, dtype=np.float64)
+            anim_res_i = int(anim_res)
+            anim_res_i = max(16, min(anim_res_i, int(base_anim.shape[0])))
+            stride = max(
+                1, int(math.ceil(float(base_anim.shape[0]) / float(anim_res_i)))
+            )
+            base_anim = base_anim[::stride, ::stride]
 
             if mode == "Thermal":
                 it = int(pp.get("erosion_iter", default_erosion_iter))
                 every = max(1, int(math.ceil(max(it, 1) / float(max_frames))))
                 frames = thermal_erosion_frames(
-                    base01,
+                    base_anim,
                     iterations=it,
                     talus=float(pp.get("erosion_talus", default_erosion_talus)),
                     strength=float(
@@ -3696,11 +3715,16 @@ elif page == "Practical":
                     ),
                     every=every,
                 )
+                max_idx = int(frames.shape[0] - 1)
+                if "anim_frame" in st.session_state:
+                    st.session_state["anim_frame"] = int(
+                        max(0, min(int(st.session_state["anim_frame"]), max_idx))
+                    )
                 idx = st.slider(
                     "Frame",
                     min_value=0,
-                    max_value=int(frames.shape[0] - 1),
-                    value=0,
+                    max_value=max_idx,
+                    value=int(st.session_state.get("anim_frame", 0)),
                     step=1,
                     key="anim_frame",
                 )
@@ -3716,6 +3740,7 @@ elif page == "Practical":
                     "Play", use_container_width=True, key="play_thermal"
                 )
                 if play:
+                    token = int(time.time() * 1_000_000)
                     for j in range(int(frames.shape[0])):
                         ph.plotly_chart(
                             _heatmap(
@@ -3724,23 +3749,15 @@ elif page == "Practical":
                                 show_colorbar=False,
                             ),
                             width="stretch",
+                            key=f"thermal_anim_play_{token}_{j}",
                         )
                         time.sleep(1.0 / max(float(fps), 1.0))
 
-            else:
+            elif mode == "Hydraulic":
                 it = int(pp.get("hyd_iter", default_hyd_iter))
                 every = max(1, int(math.ceil(max(it, 1) / float(max_frames))))
                 hf, wf, sf = hydraulic_erosion_frames(
-                    thermal_erosion(
-                        base01,
-                        iterations=int(pp.get("erosion_iter", default_erosion_iter))
-                        if bool(pp.get("erosion", False))
-                        else 0,
-                        talus=float(pp.get("erosion_talus", default_erosion_talus)),
-                        strength=float(
-                            pp.get("erosion_strength", default_erosion_strength)
-                        ),
-                    ),
+                    base_anim,
                     iterations=it,
                     rain=float(pp.get("hyd_rain", default_hyd_rain)),
                     evaporation=float(pp.get("hyd_evap", default_hyd_evap)),
@@ -3750,11 +3767,16 @@ elif page == "Practical":
                     deposition=float(pp.get("hyd_deposition", default_hyd_deposition)),
                     every=every,
                 )
+                max_idx = int(hf.shape[0] - 1)
+                if "anim_frame_h" in st.session_state:
+                    st.session_state["anim_frame_h"] = int(
+                        max(0, min(int(st.session_state["anim_frame_h"]), max_idx))
+                    )
                 idx = st.slider(
                     "Frame",
                     min_value=0,
-                    max_value=int(hf.shape[0] - 1),
-                    value=0,
+                    max_value=max_idx,
+                    value=int(st.session_state.get("anim_frame_h", 0)),
                     step=1,
                     key="anim_frame_h",
                 )
@@ -3779,23 +3801,120 @@ elif page == "Practical":
                     ph0.plotly_chart(
                         _heatmap(h, colorscale="Earth", show_colorbar=False),
                         width="stretch",
+                        key=f"hyd_anim_h_{token}_{i}",
                     )
                     ph1.plotly_chart(
                         _heatmap(w, colorscale="Cividis", show_colorbar=False),
                         width="stretch",
+                        key=f"hyd_anim_w_{token}_{i}",
                     )
                     ph2.plotly_chart(
                         _heatmap(s, colorscale="Viridis", show_colorbar=False),
                         width="stretch",
+                        key=f"hyd_anim_s_{token}_{i}",
                     )
 
+                token = int(time.time() * 1_000_000)
                 _render_h(int(idx))
 
                 play = st.button("Play", use_container_width=True, key="play_hyd")
                 if play:
+                    token = int(time.time() * 1_000_000)
                     for j in range(int(hf.shape[0])):
                         _render_h(int(j))
                         time.sleep(1.0 / max(float(fps), 1.0))
+
+            else:
+                it_t = int(pp.get("erosion_iter", default_erosion_iter))
+                it_h = int(pp.get("hyd_iter", default_hyd_iter))
+
+                every_t = max(1, int(math.ceil(max(it_t, 1) / float(max_frames))))
+                t_frames = thermal_erosion_frames(
+                    base_anim,
+                    iterations=it_t,
+                    talus=float(pp.get("erosion_talus", default_erosion_talus)),
+                    strength=float(
+                        pp.get("erosion_strength", default_erosion_strength)
+                    ),
+                    every=every_t,
+                )
+                start_h = np.asarray(t_frames[-1], dtype=np.float64)
+
+                every_h = max(1, int(math.ceil(max(it_h, 1) / float(max_frames))))
+                h_frames, w_frames, s_frames = hydraulic_erosion_frames(
+                    start_h,
+                    iterations=it_h,
+                    rain=float(pp.get("hyd_rain", default_hyd_rain)),
+                    evaporation=float(pp.get("hyd_evap", default_hyd_evap)),
+                    flow_rate=float(pp.get("hyd_flow", default_hyd_flow)),
+                    capacity=float(pp.get("hyd_capacity", default_hyd_capacity)),
+                    erosion=float(pp.get("hyd_erosion", default_hyd_erosion)),
+                    deposition=float(pp.get("hyd_deposition", default_hyd_deposition)),
+                    every=every_h,
+                )
+
+                total = int(t_frames.shape[0] + h_frames.shape[0] - 1)
+                if "anim_frame_combo" in st.session_state:
+                    st.session_state["anim_frame_combo"] = int(
+                        max(
+                            0,
+                            min(int(st.session_state["anim_frame_combo"]), total - 1),
+                        )
+                    )
+                idx = st.slider(
+                    "Frame",
+                    min_value=0,
+                    max_value=total - 1,
+                    value=int(st.session_state.get("anim_frame_combo", 0)),
+                    step=1,
+                    key="anim_frame_combo",
+                )
+                st.caption(
+                    f"thermal: stride={every_t}, frames={int(t_frames.shape[0])} | "
+                    f"hydraulic: stride={every_h}, frames={int(h_frames.shape[0])}"
+                )
+
+                if int(idx) < int(t_frames.shape[0]):
+                    st.plotly_chart(
+                        _heatmap(
+                            np.asarray(t_frames[int(idx)], dtype=np.float64),
+                            colorscale="Earth",
+                            show_colorbar=False,
+                        ),
+                        width="stretch",
+                        key="combo_frame_thermal",
+                    )
+                else:
+                    j = int(idx) - int(t_frames.shape[0]) + 1
+                    w = np.asarray(w_frames[j], dtype=np.float64)
+                    s = np.asarray(s_frames[j], dtype=np.float64)
+                    if float(np.max(w)) > 0.0:
+                        w = w / float(np.max(w))
+                    if float(np.max(s)) > 0.0:
+                        s = s / float(np.max(s))
+                    c0, c1, c2 = st.columns(3)
+                    with c0:
+                        st.plotly_chart(
+                            _heatmap(
+                                np.asarray(h_frames[j], dtype=np.float64),
+                                colorscale="Earth",
+                                show_colorbar=False,
+                            ),
+                            width="stretch",
+                            key="combo_frame_h",
+                        )
+                    with c1:
+                        st.plotly_chart(
+                            _heatmap(w, colorscale="Cividis", show_colorbar=False),
+                            width="stretch",
+                            key="combo_frame_w",
+                        )
+                    with c2:
+                        st.plotly_chart(
+                            _heatmap(s, colorscale="Viridis", show_colorbar=False),
+                            width="stretch",
+                            key="combo_frame_s",
+                        )
         else:
             st.info(
                 "Enable thermal and/or hydraulic erosion in Practical settings "
