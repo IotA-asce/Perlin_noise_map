@@ -1,23 +1,19 @@
 from __future__ import annotations
 
+import io
 import json
 import math
 import time
+from typing import Any, cast
 from urllib.parse import urlencode
 
 import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
+from PIL import Image
 
-from perlin.noise_2d import (
-    Perlin2D,
-    domain_warp2,
-    fbm2,
-    ridged2,
-    tileable2d,
-    turbulence2,
-)
-from perlin.value_noise_2d import ValueNoise2D
+from perlin.map2d import noise_map_2d
+from perlin.noise_2d import Perlin2D
 from st_components.hotkeys import hotkeys
 from st_components.live_slider import live_slider
 from ui.styles import inject_global_styles
@@ -29,6 +25,17 @@ from viz.step_2d import (
     scanline_figure,
     scanline_series_from_debug,
 )
+from worldgen.climate import apply_climate_palette, climate_biome_map
+from worldgen.contours import apply_mask_overlay, contour_mask
+from worldgen.erosion import (
+    hydraulic_erosion_frames,
+    thermal_erosion,
+    thermal_erosion_frames,
+)
+from worldgen.paths import astar_path
+from worldgen.pipeline import practical_pipeline
+from worldgen.tiles import tiles_zip_from_rgb
+from worldgen.vegetation import filter_points_by_mask, jittered_points
 
 st.set_page_config(
     page_title="Perlin Noise Map",
@@ -83,6 +90,82 @@ def _set_query_params(params: dict[str, str]) -> None:
         st.experimental_set_query_params(**params)
 
 
+def _nav_log(event: str, payload: dict[str, object] | None = None) -> None:
+    if "nav_log" not in st.session_state:
+        st.session_state["nav_log"] = []
+    item = {
+        "ts": time.time(),
+        "event": str(event),
+        "payload": dict(payload or {}),
+    }
+    st.session_state["nav_log"].append(item)
+    st.session_state["nav_log"] = st.session_state["nav_log"][-60:]
+
+
+def _freeze_params(params: dict[str, object]) -> tuple[tuple[str, str], ...]:
+    items: list[tuple[str, str]] = []
+    for k in sorted(params.keys()):
+        items.append((str(k), repr(params[k])))
+    return tuple(items)
+
+
+def _snap_to_scale(x: float, *, scale: float) -> float:
+    s = max(float(scale), 1e-9)
+    return float(round(float(x) * s) / s)
+
+
+def _chunk_cache_state() -> dict[str, Any]:
+    if "chunk_cache" not in st.session_state:
+        st.session_state["chunk_cache"] = {
+            "order": [],
+            "data": {},
+            "hits": 0,
+            "misses": 0,
+            "evictions": 0,
+        }
+    return cast(dict[str, Any], st.session_state["chunk_cache"])
+
+
+def _chunk_cache_get(key: object) -> object | None:
+    stt = _chunk_cache_state()
+    data = cast(dict[object, object], stt["data"])
+    if key not in data:
+        stt["misses"] = int(stt.get("misses", 0)) + 1
+        return None
+    stt["hits"] = int(stt.get("hits", 0)) + 1
+    order = cast(list[object], stt["order"])
+    try:
+        order.remove(key)
+    except ValueError:
+        pass
+    order.append(key)
+    return data[key]
+
+
+def _chunk_cache_put(key: object, value: object, *, max_items: int) -> None:
+    stt = _chunk_cache_state()
+    data = cast(dict[object, object], stt["data"])
+    order = cast(list[object], stt["order"])
+
+    if key in data:
+        data[key] = value
+        try:
+            order.remove(key)
+        except ValueError:
+            pass
+        order.append(key)
+        return
+
+    data[key] = value
+    order.append(key)
+
+    max_items = int(max_items)
+    while max_items > 0 and len(order) > max_items:
+        old = order.pop(0)
+        data.pop(old, None)
+        stt["evictions"] = int(stt.get("evictions", 0)) + 1
+
+
 _COLOR_SCALES = ["Viridis", "Cividis", "Turbo", "IceFire", "Earth"]
 _QUALITY = ["Fast", "Balanced", "Full"]
 _NOISE_VARIANTS = {
@@ -102,7 +185,7 @@ _GRAD2_SETS = {
 }
 
 default_page = _qp_get("page", "Explore")
-if default_page not in {"Explore", "Learn"}:
+if default_page not in {"Explore", "Practical", "Learn"}:
     default_page = "Explore"
 
 default_seed = _qp_int("seed", 0, min_value=0, max_value=2**31 - 1)
@@ -124,6 +207,79 @@ default_show_colorbar = _qp_bool("show_colorbar", False)
 default_show3d = _qp_bool("show3d", True)
 default_live_drag = _qp_bool("live_drag", True)
 default_throttle_ms = _qp_int("throttle_ms", 50, min_value=10, max_value=250)
+
+# Practical terrain defaults.
+default_water_level = _qp_float("water_level", 0.45, min_value=0.0, max_value=1.0)
+default_shore_width = _qp_float("shore_width", 0.05, min_value=0.0, max_value=0.25)
+default_mountain_level = _qp_float("mountain_level", 0.75, min_value=0.0, max_value=1.0)
+default_snowline = _qp_float("snowline", 0.83, min_value=0.0, max_value=1.0)
+default_shade_az = _qp_float("shade_az", 315.0, min_value=0.0, max_value=360.0)
+default_shade_alt = _qp_float("shade_alt", 45.0, min_value=0.0, max_value=90.0)
+default_shade_strength = _qp_float("shade_strength", 0.55, min_value=0.0, max_value=1.0)
+default_river_q = _qp_float("river_q", 0.985, min_value=0.9, max_value=0.999)
+default_river_carve = _qp_bool("river_carve", True)
+default_river_depth = _qp_float("river_depth", 0.06, min_value=0.0, max_value=0.2)
+default_fill_lakes = _qp_bool("fill_lakes", True)
+default_coast_smooth = _qp_bool("coast_smooth", True)
+default_coast_radius = _qp_int("coast_radius", 2, min_value=0, max_value=12)
+default_coast_strength = _qp_float("coast_strength", 0.6, min_value=0.0, max_value=1.0)
+default_beach = _qp_bool("beach", True)
+default_beach_amount = _qp_float("beach_amount", 0.02, min_value=0.0, max_value=0.1)
+default_erosion = _qp_bool("erosion", False)
+default_erosion_iter = _qp_int("erosion_iter", 30, min_value=0, max_value=250)
+default_erosion_talus = _qp_float("erosion_talus", 0.02, min_value=0.0, max_value=0.1)
+default_erosion_strength = _qp_float(
+    "erosion_strength", 0.35, min_value=0.0, max_value=1.0
+)
+default_hydraulic = _qp_bool("hydraulic", False)
+default_hyd_iter = _qp_int("hyd_iter", 40, min_value=0, max_value=250)
+default_hyd_rain = _qp_float("hyd_rain", 0.01, min_value=0.0, max_value=0.05)
+default_hyd_evap = _qp_float("hyd_evap", 0.5, min_value=0.0, max_value=1.0)
+default_hyd_flow = _qp_float("hyd_flow", 0.5, min_value=0.0, max_value=1.0)
+default_hyd_capacity = _qp_float("hyd_capacity", 4.0, min_value=0.0, max_value=10.0)
+default_hyd_erosion = _qp_float("hyd_erosion", 0.3, min_value=0.0, max_value=1.0)
+default_hyd_deposition = _qp_float("hyd_deposition", 0.3, min_value=0.0, max_value=1.0)
+default_player_x = _qp_float("player_x", 0.0, min_value=-1e6, max_value=1e6)
+default_player_y = _qp_float("player_y", 0.0, min_value=-1e6, max_value=1e6)
+default_nav_step_px = _qp_float("nav_step_px", 64.0, min_value=1.0, max_value=512.0)
+default_chunk_size_px = _qp_int("chunk_size_px", 256, min_value=32, max_value=2048)
+default_show_chunk_grid = _qp_bool("show_chunk_grid", False)
+default_chunk_cache_n = _qp_int("chunk_cache_n", 24, min_value=0, max_value=256)
+
+default_backend = _qp_get("backend", "Reference")
+if default_backend not in {"Reference", "Fast"}:
+    default_backend = "Reference"
+default_constraints = _qp_bool("constraints", False)
+default_water_behavior = _qp_get("water_behavior", "Slow")
+if default_water_behavior not in {"Slow", "Block"}:
+    default_water_behavior = "Slow"
+default_water_slow = _qp_float("water_slow", 0.35, min_value=0.05, max_value=1.0)
+default_slope_block = _qp_float("slope_block", 0.75, min_value=0.0, max_value=1.0)
+default_slope_cost = _qp_float("slope_cost", 2.0, min_value=0.0, max_value=10.0)
+
+# Extras.
+default_climate = _qp_bool("climate", False)
+default_climate_scale = _qp_float(
+    "climate_scale", 600.0, min_value=20.0, max_value=2000.0
+)
+default_climate_strength = _qp_float(
+    "climate_strength", 0.85, min_value=0.0, max_value=1.0
+)
+default_veg = _qp_bool("veg", True)
+default_veg_cell = _qp_int("veg_cell", 18, min_value=6, max_value=64)
+default_veg_p = _qp_float("veg_p", 0.55, min_value=0.0, max_value=1.0)
+default_rocks = _qp_bool("rocks", True)
+default_trails = _qp_bool("trails", False)
+default_trail_tx = _qp_float("trail_tx", 0.85, min_value=0.0, max_value=1.0)
+default_trail_ty = _qp_float("trail_ty", 0.25, min_value=0.0, max_value=1.0)
+default_cartographic = _qp_bool("carto", False)
+default_contour_interval = _qp_float(
+    "contour_interval", 0.05, min_value=0.01, max_value=0.2
+)
+default_contour_alpha = _qp_float("contour_alpha", 0.45, min_value=0.0, max_value=1.0)
+default_tiles_grid = _qp_int("tiles_grid", 4, min_value=1, max_value=8)
+default_tiles_size = _qp_int("tiles_size", 256, min_value=64, max_value=512)
+default_tiles_z = _qp_int("tiles_z", 0, min_value=0, max_value=12)
 
 default_colorscale = _qp_get("colorscale", "Viridis")
 if default_colorscale not in _COLOR_SCALES:
@@ -236,93 +392,193 @@ def _noise_map(
     normalize: bool,
     tileable: bool,
 ) -> np.ndarray:
-    basis = str(basis)
-    grad_set = str(grad_set)
-    if basis == "perlin":
-        noise = Perlin2D(seed=seed, grad_set=grad_set)
-    elif basis == "value":
-        noise = ValueNoise2D(seed=seed)
-    else:
-        raise ValueError(f"unknown basis: {basis}")
-
-    scale = max(scale, 1e-9)
-    if tileable:
-        period_x = (float(width) - 1.0) / scale
-        period_y = (float(height) - 1.0) / scale
-        xs = np.linspace(offset_x, offset_x + period_x, width, dtype=np.float64)
-        ys = np.linspace(offset_y, offset_y + period_y, height, dtype=np.float64)
-    else:
-        xs = (np.arange(width, dtype=np.float64) / scale) + offset_x
-        ys = (np.arange(height, dtype=np.float64) / scale) + offset_y
-    xg, yg = np.meshgrid(xs, ys)
-
-    variant = str(variant)
-    warp_amp = float(warp_amp)
-    warp_scale = float(warp_scale)
-    warp_octaves = int(warp_octaves)
-
-    def base(xx: np.ndarray, yy: np.ndarray) -> np.ndarray:
-        if variant == "fbm":
-            return fbm2(
-                noise,
-                xx,
-                yy,
-                octaves=octaves,
-                lacunarity=lacunarity,
-                persistence=persistence,
-            )
-        if variant == "turbulence":
-            return turbulence2(
-                noise,
-                xx,
-                yy,
-                octaves=octaves,
-                lacunarity=lacunarity,
-                persistence=persistence,
-            )
-        if variant == "ridged":
-            return ridged2(
-                noise,
-                xx,
-                yy,
-                octaves=octaves,
-                lacunarity=lacunarity,
-                persistence=persistence,
-            )
-        if variant == "domain_warp":
-            return domain_warp2(
-                noise,
-                xx,
-                yy,
-                octaves=octaves,
-                lacunarity=lacunarity,
-                persistence=persistence,
-                warp_amp=warp_amp,
-                warp_scale=warp_scale,
-                warp_octaves=warp_octaves,
-                warp_lacunarity=lacunarity,
-                warp_persistence=persistence,
-            )
-        raise ValueError(f"unknown variant: {variant}")
-
-    z = (
-        tileable2d(base, xg, yg, period_x=period_x, period_y=period_y)
-        if tileable
-        else base(xg, yg)
+    return noise_map_2d(
+        seed=int(seed),
+        basis=str(basis),
+        grad_set=str(grad_set),
+        width=int(width),
+        height=int(height),
+        scale=float(scale),
+        octaves=int(octaves),
+        lacunarity=float(lacunarity),
+        persistence=float(persistence),
+        variant=str(variant),
+        warp_amp=float(warp_amp),
+        warp_scale=float(warp_scale),
+        warp_octaves=int(warp_octaves),
+        offset_x=float(offset_x),
+        offset_y=float(offset_y),
+        normalize=bool(normalize),
+        tileable=bool(tileable),
     )
 
-    if not normalize:
-        return z
 
-    # Normalize for display.
-    zmin = float(np.min(z))
-    zmax = float(np.max(z))
-    if math.isclose(zmin, zmax):
-        return np.zeros_like(z)
-    return (z - zmin) / (zmax - zmin)
+@st.cache_data(show_spinner=False)
+def _practical_pipeline(
+    *,
+    seed: int,
+    basis: str,
+    grad2: str,
+    noise_variant: str,
+    warp_amp: float,
+    warp_scale: float,
+    warp_octaves: int,
+    scale: float,
+    octaves: int,
+    lacunarity: float,
+    persistence: float,
+    width: int,
+    height: int,
+    view_left: float,
+    view_top: float,
+    z_scale: float,
+    water_level: float,
+    shore_width: float,
+    mountain_level: float,
+    snowline: float,
+    shade_az: float,
+    shade_alt: float,
+    shade_strength: float,
+    river_q: float,
+    river_carve: bool,
+    river_depth: float,
+    fill_lakes: bool,
+    coast_smooth: bool,
+    coast_radius: int,
+    coast_strength: float,
+    beach: bool,
+    beach_amount: float,
+    thermal_on: bool,
+    thermal_iter: int,
+    thermal_talus: float,
+    thermal_strength: float,
+    hydraulic_on: bool,
+    hyd_iter: int,
+    hyd_rain: float,
+    hyd_evap: float,
+    hyd_flow: float,
+    hyd_capacity: float,
+    hyd_erosion: float,
+    hyd_deposition: float,
+    backend: str,
+) -> dict[str, np.ndarray | float | bool | None]:
+    dtype = np.float32 if str(backend) == "Fast" else np.float64
+
+    out = practical_pipeline(
+        seed=int(seed),
+        basis=str(basis),
+        grad2=str(grad2),
+        noise_variant=str(noise_variant),
+        warp_amp=float(warp_amp),
+        warp_scale=float(warp_scale),
+        warp_octaves=int(warp_octaves),
+        scale=float(scale),
+        octaves=int(octaves),
+        lacunarity=float(lacunarity),
+        persistence=float(persistence),
+        width=int(width),
+        height=int(height),
+        view_left=float(view_left),
+        view_top=float(view_top),
+        z_scale=float(z_scale),
+        water_level=float(water_level),
+        shore_width=float(shore_width),
+        mountain_level=float(mountain_level),
+        snowline=float(snowline),
+        shade_az=float(shade_az),
+        shade_alt=float(shade_alt),
+        shade_strength=float(shade_strength),
+        river_q=float(river_q),
+        river_carve=bool(river_carve),
+        river_depth=float(river_depth),
+        fill_lakes=bool(fill_lakes),
+        coast_smooth=bool(coast_smooth),
+        coast_radius=int(coast_radius),
+        coast_strength=float(coast_strength),
+        beach=bool(beach),
+        beach_amount=float(beach_amount),
+        thermal_on=bool(thermal_on),
+        thermal_iter=int(thermal_iter),
+        thermal_talus=float(thermal_talus),
+        thermal_strength=float(thermal_strength),
+        hydraulic_on=bool(hydraulic_on),
+        hyd_iter=int(hyd_iter),
+        hyd_rain=float(hyd_rain),
+        hyd_evap=float(hyd_evap),
+        hyd_flow=float(hyd_flow),
+        hyd_capacity=float(hyd_capacity),
+        hyd_erosion=float(hyd_erosion),
+        hyd_deposition=float(hyd_deposition),
+        dtype=dtype,
+    )
+
+    return dict(out)
 
 
-def _heatmap(z: np.ndarray, *, colorscale: str, show_colorbar: bool) -> go.Figure:
+@st.cache_data(show_spinner=False)
+def _climate_fields(
+    *,
+    seed: int,
+    basis: str,
+    grad2: str,
+    width: int,
+    height: int,
+    climate_scale: float,
+    view_left: float,
+    view_top: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    # Temperature and moisture: use decorrelated fBm fields.
+    zt = _noise_map(
+        seed=int(seed) + 101,
+        basis=str(basis),
+        grad_set=str(grad2),
+        width=int(width),
+        height=int(height),
+        scale=float(climate_scale),
+        octaves=4,
+        lacunarity=2.0,
+        persistence=0.5,
+        variant="fbm",
+        warp_amp=0.0,
+        warp_scale=1.0,
+        warp_octaves=1,
+        offset_x=float(view_left) + 19.1,
+        offset_y=float(view_top) + 7.3,
+        normalize=False,
+        tileable=False,
+    )
+    zm = _noise_map(
+        seed=int(seed) + 202,
+        basis=str(basis),
+        grad_set=str(grad2),
+        width=int(width),
+        height=int(height),
+        scale=float(climate_scale),
+        octaves=4,
+        lacunarity=2.0,
+        persistence=0.5,
+        variant="fbm",
+        warp_amp=0.0,
+        warp_scale=1.0,
+        warp_octaves=1,
+        offset_x=float(view_left) - 11.8,
+        offset_y=float(view_top) + 47.2,
+        normalize=False,
+        tileable=False,
+    )
+
+    temp01 = np.clip((np.asarray(zt, dtype=np.float64) + 1.0) * 0.5, 0.0, 1.0)
+    moist01 = np.clip((np.asarray(zm, dtype=np.float64) + 1.0) * 0.5, 0.0, 1.0)
+    return temp01, moist01
+
+
+def _heatmap(
+    z: np.ndarray,
+    *,
+    colorscale: str,
+    show_colorbar: bool,
+    height: int = 520,
+) -> go.Figure:
     fig = go.Figure(
         data=go.Heatmap(
             z=z,
@@ -334,7 +590,7 @@ def _heatmap(z: np.ndarray, *, colorscale: str, show_colorbar: bool) -> go.Figur
     )
     fig.update_layout(
         margin=dict(l=0, r=0, t=0, b=0),
-        height=520,
+        height=int(height),
     )
     fig.update_yaxes(
         autorange="reversed",
@@ -348,6 +604,77 @@ def _heatmap(z: np.ndarray, *, colorscale: str, show_colorbar: bool) -> go.Figur
         zeroline=False,
     )
     return fig
+
+
+def _rgb_figure(
+    rgb01: np.ndarray,
+    *,
+    marker_xy: tuple[float, float] | None = None,
+    marker_label: str = "Player",
+    height: int = 520,
+) -> go.Figure:
+    rgb = np.asarray(rgb01, dtype=np.float64)
+    if rgb.ndim != 3 or rgb.shape[2] != 3:
+        raise ValueError("rgb01 must be HxWx3")
+
+    img = np.clip(rgb * 255.0, 0.0, 255.0).astype(np.uint8)
+    fig = go.Figure(data=go.Image(z=img))
+    fig.update_layout(margin=dict(l=0, r=0, t=0, b=0), height=int(height))
+    fig.update_yaxes(autorange="reversed", showticklabels=False, showgrid=False)
+    fig.update_xaxes(showticklabels=False, showgrid=False)
+
+    if marker_xy is not None:
+        x, y = marker_xy
+        fig.add_trace(
+            go.Scatter(
+                x=[x],
+                y=[y],
+                mode="markers+text",
+                marker=dict(
+                    size=10,
+                    color="rgba(255,255,255,0.95)",
+                    line=dict(width=2, color="rgba(0,0,0,0.75)"),
+                ),
+                text=[marker_label],
+                textposition="top center",
+                textfont=dict(color="rgba(255,255,255,0.95)", size=12),
+                hoverinfo="skip",
+                showlegend=False,
+            )
+        )
+
+    return fig
+
+
+def _rgb_to_png_bytes(rgb01: np.ndarray) -> bytes:
+    rgb = np.asarray(rgb01, dtype=np.float64)
+    if rgb.ndim != 3 or rgb.shape[2] != 3:
+        raise ValueError("rgb01 must be HxWx3")
+    img = np.clip(rgb * 255.0, 0.0, 255.0).astype(np.uint8)
+    out = io.BytesIO()
+    Image.fromarray(img, mode="RGB").save(out, format="PNG")
+    return out.getvalue()
+
+
+def _rgb_overlay(
+    rgb01: np.ndarray,
+    mask: np.ndarray,
+    *,
+    color: tuple[float, float, float],
+    alpha: float,
+) -> np.ndarray:
+    rgb = np.asarray(rgb01, dtype=np.float64)
+    m = np.asarray(mask).astype(bool)
+    if rgb.ndim != 3 or rgb.shape[2] != 3:
+        raise ValueError("rgb01 must be HxWx3")
+    if m.shape != rgb.shape[:2]:
+        raise ValueError("mask must be HxW")
+
+    a = float(np.clip(float(alpha), 0.0, 1.0))
+    c = np.array(color, dtype=np.float64)
+    out = rgb.copy()
+    out[m] = out[m] * (1.0 - a) + c * a
+    return np.clip(out, 0.0, 1.0)
 
 
 def _surface(
@@ -461,8 +788,10 @@ with st.sidebar:
     st.header("Navigation")
     page = st.radio(
         "Page",
-        ["Explore", "Learn"],
-        index=0 if default_page == "Explore" else 1,
+        ["Explore", "Practical", "Learn"],
+        index=(
+            0 if default_page == "Explore" else 1 if default_page == "Practical" else 2
+        ),
         label_visibility="collapsed",
     )
 
@@ -508,6 +837,66 @@ with st.sidebar:
 
     if "applied_params" not in st.session_state:
         st.session_state["applied_params"] = dict(default_params)
+
+    if "practical_params" not in st.session_state:
+        st.session_state["practical_params"] = {
+            "water_level": float(default_water_level),
+            "shore_width": float(default_shore_width),
+            "mountain_level": float(default_mountain_level),
+            "snowline": float(default_snowline),
+            "shade_az": float(default_shade_az),
+            "shade_alt": float(default_shade_alt),
+            "shade_strength": float(default_shade_strength),
+            "river_q": float(default_river_q),
+            "river_carve": bool(default_river_carve),
+            "river_depth": float(default_river_depth),
+            "fill_lakes": bool(default_fill_lakes),
+            "coast_smooth": bool(default_coast_smooth),
+            "coast_radius": int(default_coast_radius),
+            "coast_strength": float(default_coast_strength),
+            "beach": bool(default_beach),
+            "beach_amount": float(default_beach_amount),
+            "erosion": bool(default_erosion),
+            "erosion_iter": int(default_erosion_iter),
+            "erosion_talus": float(default_erosion_talus),
+            "erosion_strength": float(default_erosion_strength),
+            "hydraulic": bool(default_hydraulic),
+            "hyd_iter": int(default_hyd_iter),
+            "hyd_rain": float(default_hyd_rain),
+            "hyd_evap": float(default_hyd_evap),
+            "hyd_flow": float(default_hyd_flow),
+            "hyd_capacity": float(default_hyd_capacity),
+            "hyd_erosion": float(default_hyd_erosion),
+            "hyd_deposition": float(default_hyd_deposition),
+            "player_x": float(default_player_x),
+            "player_y": float(default_player_y),
+            "nav_step_px": float(default_nav_step_px),
+            "chunk_size_px": int(default_chunk_size_px),
+            "show_chunk_grid": bool(default_show_chunk_grid),
+            "chunk_cache_n": int(default_chunk_cache_n),
+            "backend": str(default_backend),
+            "constraints": bool(default_constraints),
+            "water_behavior": str(default_water_behavior),
+            "water_slow": float(default_water_slow),
+            "slope_block": float(default_slope_block),
+            "slope_cost": float(default_slope_cost),
+            "climate": bool(default_climate),
+            "climate_scale": float(default_climate_scale),
+            "climate_strength": float(default_climate_strength),
+            "veg": bool(default_veg),
+            "veg_cell": int(default_veg_cell),
+            "veg_p": float(default_veg_p),
+            "rocks": bool(default_rocks),
+            "trails": bool(default_trails),
+            "trail_tx": float(default_trail_tx),
+            "trail_ty": float(default_trail_ty),
+            "carto": bool(default_cartographic),
+            "contour_interval": float(default_contour_interval),
+            "contour_alpha": float(default_contour_alpha),
+            "tiles_grid": int(default_tiles_grid),
+            "tiles_size": int(default_tiles_size),
+            "tiles_z": int(default_tiles_z),
+        }
 
     if update_mode == "Apply":
         applied = dict(st.session_state["applied_params"])
@@ -995,6 +1384,7 @@ with st.sidebar:
 
     st.divider()
     st.subheader("Share")
+    pp = dict(st.session_state.get("practical_params", {}))
     params_for_url = {
         "page": str(page),
         "basis": str(basis),
@@ -1024,6 +1414,72 @@ with st.sidebar:
         "colorscale": str(colorscale),
         "show_colorbar": "1" if bool(show_colorbar) else "0",
         "show_hist": "1" if bool(show_hist) else "0",
+        "water_level": str(float(pp.get("water_level", default_water_level))),
+        "shore_width": str(float(pp.get("shore_width", default_shore_width))),
+        "mountain_level": str(float(pp.get("mountain_level", default_mountain_level))),
+        "snowline": str(float(pp.get("snowline", default_snowline))),
+        "shade_az": str(float(pp.get("shade_az", default_shade_az))),
+        "shade_alt": str(float(pp.get("shade_alt", default_shade_alt))),
+        "shade_strength": str(float(pp.get("shade_strength", default_shade_strength))),
+        "river_q": str(float(pp.get("river_q", default_river_q))),
+        "river_carve": "1" if bool(pp.get("river_carve", default_river_carve)) else "0",
+        "river_depth": str(float(pp.get("river_depth", default_river_depth))),
+        "fill_lakes": "1" if bool(pp.get("fill_lakes", default_fill_lakes)) else "0",
+        "coast_smooth": "1"
+        if bool(pp.get("coast_smooth", default_coast_smooth))
+        else "0",
+        "coast_radius": str(int(pp.get("coast_radius", default_coast_radius))),
+        "coast_strength": str(float(pp.get("coast_strength", default_coast_strength))),
+        "beach": "1" if bool(pp.get("beach", default_beach)) else "0",
+        "beach_amount": str(float(pp.get("beach_amount", default_beach_amount))),
+        "erosion": "1" if bool(pp.get("erosion", default_erosion)) else "0",
+        "erosion_iter": str(int(pp.get("erosion_iter", default_erosion_iter))),
+        "erosion_talus": str(float(pp.get("erosion_talus", default_erosion_talus))),
+        "erosion_strength": str(
+            float(pp.get("erosion_strength", default_erosion_strength))
+        ),
+        "hydraulic": "1" if bool(pp.get("hydraulic", default_hydraulic)) else "0",
+        "hyd_iter": str(int(pp.get("hyd_iter", default_hyd_iter))),
+        "hyd_rain": str(float(pp.get("hyd_rain", default_hyd_rain))),
+        "hyd_evap": str(float(pp.get("hyd_evap", default_hyd_evap))),
+        "hyd_flow": str(float(pp.get("hyd_flow", default_hyd_flow))),
+        "hyd_capacity": str(float(pp.get("hyd_capacity", default_hyd_capacity))),
+        "hyd_erosion": str(float(pp.get("hyd_erosion", default_hyd_erosion))),
+        "hyd_deposition": str(float(pp.get("hyd_deposition", default_hyd_deposition))),
+        "player_x": str(float(pp.get("player_x", default_player_x))),
+        "player_y": str(float(pp.get("player_y", default_player_y))),
+        "nav_step_px": str(float(pp.get("nav_step_px", default_nav_step_px))),
+        "chunk_size_px": str(int(pp.get("chunk_size_px", default_chunk_size_px))),
+        "show_chunk_grid": "1"
+        if bool(pp.get("show_chunk_grid", default_show_chunk_grid))
+        else "0",
+        "chunk_cache_n": str(int(pp.get("chunk_cache_n", default_chunk_cache_n))),
+        "backend": str(pp.get("backend", default_backend)),
+        "constraints": "1" if bool(pp.get("constraints", default_constraints)) else "0",
+        "water_behavior": str(pp.get("water_behavior", default_water_behavior)),
+        "water_slow": str(float(pp.get("water_slow", default_water_slow))),
+        "slope_block": str(float(pp.get("slope_block", default_slope_block))),
+        "slope_cost": str(float(pp.get("slope_cost", default_slope_cost))),
+        "climate": "1" if bool(pp.get("climate", default_climate)) else "0",
+        "climate_scale": str(float(pp.get("climate_scale", default_climate_scale))),
+        "climate_strength": str(
+            float(pp.get("climate_strength", default_climate_strength))
+        ),
+        "veg": "1" if bool(pp.get("veg", default_veg)) else "0",
+        "veg_cell": str(int(pp.get("veg_cell", default_veg_cell))),
+        "veg_p": str(float(pp.get("veg_p", default_veg_p))),
+        "rocks": "1" if bool(pp.get("rocks", default_rocks)) else "0",
+        "trails": "1" if bool(pp.get("trails", default_trails)) else "0",
+        "trail_tx": str(float(pp.get("trail_tx", default_trail_tx))),
+        "trail_ty": str(float(pp.get("trail_ty", default_trail_ty))),
+        "carto": "1" if bool(pp.get("carto", default_cartographic)) else "0",
+        "contour_interval": str(
+            float(pp.get("contour_interval", default_contour_interval))
+        ),
+        "contour_alpha": str(float(pp.get("contour_alpha", default_contour_alpha))),
+        "tiles_grid": str(int(pp.get("tiles_grid", default_tiles_grid))),
+        "tiles_size": str(int(pp.get("tiles_size", default_tiles_size))),
+        "tiles_z": str(int(pp.get("tiles_z", default_tiles_z))),
     }
     if st.button("Update URL with current settings"):
         _set_query_params(params_for_url)
@@ -1088,7 +1544,7 @@ with st.sidebar:
 
 hk = hotkeys(
     enabled=True,
-    allowed=["r", "0", "h", "c", "t", "3", "p", "l"],
+    allowed=["r", "0", "h", "c", "t", "3", "p", "l", "w", "a", "s", "d"],
     key="hotkeys",
 )
 
@@ -1142,7 +1598,89 @@ if isinstance(hk, dict) and "ts" in hk:
         elif k == "3":
             new["show3d"] = "0" if bool(show3d) else "1"
         elif k == "p":
-            new["page"] = "Learn" if str(page) == "Explore" else "Explore"
+            if str(page) == "Explore":
+                new["page"] = "Practical"
+            elif str(page) == "Practical":
+                new["page"] = "Learn"
+            else:
+                new["page"] = "Explore"
+        elif k in {"w", "a", "s", "d"}:
+            if str(page) == "Practical":
+                pp = dict(st.session_state.get("practical_params", {}))
+                step_px = float(pp.get("nav_step_px", default_nav_step_px))
+
+                step = step_px / max(float(scale), 1e-9)
+                move_dx = 0.0
+                move_dy = 0.0
+                if k == "w":
+                    move_dy -= 1.0
+                elif k == "s":
+                    move_dy += 1.0
+                elif k == "a":
+                    move_dx -= 1.0
+                elif k == "d":
+                    move_dx += 1.0
+
+                factor = 1.0
+                blocked = False
+                if bool(pp.get("constraints", default_constraints)):
+                    last_h = st.session_state.get("practical_last_height")
+                    last_s = st.session_state.get("practical_last_slope")
+                    if isinstance(last_h, np.ndarray) and isinstance(
+                        last_s, np.ndarray
+                    ):
+                        Hh, Ww = last_h.shape
+                        cxp = int((Ww - 1) // 2)
+                        cyp = int((Hh - 1) // 2)
+                        tx = int(cxp + round(move_dx * float(step_px)))
+                        ty = int(cyp + round(move_dy * float(step_px)))
+                        if 0 <= tx < int(Ww) and 0 <= ty < int(Hh):
+                            h = float(last_h[ty, tx])
+                            sl = float(last_s[ty, tx])
+                            water = h < float(
+                                pp.get("water_level", default_water_level)
+                            )
+                            if sl >= float(pp.get("slope_block", default_slope_block)):
+                                blocked = True
+                            elif (
+                                water
+                                and str(
+                                    pp.get("water_behavior", default_water_behavior)
+                                )
+                                == "Block"
+                            ):
+                                blocked = True
+                            else:
+                                sc = float(pp.get("slope_cost", default_slope_cost))
+                                if sc > 0.0:
+                                    factor /= 1.0 + sc * sl
+                                if (
+                                    water
+                                    and str(
+                                        pp.get("water_behavior", default_water_behavior)
+                                    )
+                                    == "Slow"
+                                ):
+                                    factor *= float(
+                                        pp.get("water_slow", default_water_slow)
+                                    )
+
+                px = float(pp.get("player_x", default_player_x))
+                py = float(pp.get("player_y", default_player_y))
+                if not blocked:
+                    px += move_dx * step * factor
+                    py += move_dy * step * factor
+
+                pp["player_x"] = float(px)
+                pp["player_y"] = float(py)
+                st.session_state["practical_params"] = pp
+
+                view_left = float(px) - (float(width) / (2.0 * max(float(scale), 1e-9)))
+                view_top = float(py) - (float(height) / (2.0 * max(float(scale), 1e-9)))
+                new["player_x"] = str(float(px))
+                new["player_y"] = str(float(py))
+                new["offset_x"] = str(float(view_left))
+                new["offset_y"] = str(float(view_top))
         elif k == "l":
             new["live_drag"] = "0" if bool(live_drag) else "1"
 
@@ -1295,7 +1833,7 @@ if page == "Explore":
 
         with st.expander("Cross-section"):
             mode = st.radio(
-                "",
+                "Cross-section mode",
                 ["Row", "Column"],
                 horizontal=True,
                 label_visibility="collapsed",
@@ -1757,6 +2295,1900 @@ if page == "Explore":
                     file_name="heightmap.npy",
                     mime="application/octet-stream",
                 )
+elif page == "Practical":
+    st.subheader("Practical: Terrain Generator")
+    st.caption(
+        "A learning-first worldgen sandbox: height -> biomes, rivers, and weathering. "
+        "Use WASD (or the buttons) to move the player marker across an endless map."
+    )
+
+    pp = dict(st.session_state.get("practical_params", {}))
+    if "practical_player_init" not in st.session_state:
+        # If the user arrives here from Explore with a non-zero viewport, center
+        # the player on the current view (unless player coords were explicitly set).
+        if math.isclose(
+            float(pp.get("player_x", 0.0)), float(default_player_x)
+        ) and math.isclose(float(pp.get("player_y", 0.0)), float(default_player_y)):
+            px0 = float(offset_x) + (
+                float(width_render) / (2.0 * max(float(scale), 1e-9))
+            )
+            py0 = float(offset_y) + (
+                float(height_render) / (2.0 * max(float(scale), 1e-9))
+            )
+            pp["player_x"] = float(px0)
+            pp["player_y"] = float(py0)
+            st.session_state["practical_params"] = pp
+        st.session_state["practical_player_init"] = True
+
+    left_col, right_col = st.columns([0.95, 1.55], gap="large")
+
+    with left_col:
+        if "practical_debug" not in st.session_state:
+            st.session_state["practical_debug"] = False
+        debug_mode = st.toggle("Debug mode", key="practical_debug")
+
+        st.markdown("**Controls**")
+
+        with st.form("practical_settings", border=False):
+            tabs = st.tabs(
+                ["Terrain", "Hydrology", "Weathering", "Navigation", "Extras"]
+            )
+            with tabs[0]:
+                st.markdown("**Terrain + lighting**")
+                water_level = st.slider(
+                    "Water level",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(pp.get("water_level", default_water_level)),
+                    step=0.01,
+                )
+                shore_width = st.slider(
+                    "Shore width",
+                    min_value=0.0,
+                    max_value=0.25,
+                    value=float(pp.get("shore_width", default_shore_width)),
+                    step=0.01,
+                )
+                mountain_level = st.slider(
+                    "Mountain level",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(pp.get("mountain_level", default_mountain_level)),
+                    step=0.01,
+                )
+                snowline = st.slider(
+                    "Snowline",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(pp.get("snowline", default_snowline)),
+                    step=0.01,
+                )
+                st.divider()
+                shade_az = st.slider(
+                    "Light azimuth (deg)",
+                    min_value=0.0,
+                    max_value=360.0,
+                    value=float(pp.get("shade_az", default_shade_az)),
+                    step=1.0,
+                )
+                shade_alt = st.slider(
+                    "Light altitude (deg)",
+                    min_value=0.0,
+                    max_value=90.0,
+                    value=float(pp.get("shade_alt", default_shade_alt)),
+                    step=1.0,
+                )
+                shade_strength = st.slider(
+                    "Shade strength",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(pp.get("shade_strength", default_shade_strength)),
+                    step=0.05,
+                )
+
+            with tabs[1]:
+                st.markdown("**Rivers + lakes**")
+                river_q = st.slider(
+                    "River density (quantile)",
+                    min_value=0.9,
+                    max_value=0.999,
+                    value=float(pp.get("river_q", default_river_q)),
+                    step=0.001,
+                    help=(
+                        "Higher = fewer rivers. "
+                        "Uses flow accumulation quantiles for a stable knob."
+                    ),
+                )
+                river_carve = st.toggle(
+                    "Carve rivers",
+                    value=bool(pp.get("river_carve", default_river_carve)),
+                )
+                river_depth = st.slider(
+                    "River carve depth",
+                    min_value=0.0,
+                    max_value=0.2,
+                    value=float(pp.get("river_depth", default_river_depth)),
+                    step=0.01,
+                )
+                fill_lakes = st.toggle(
+                    "Fill depressions (lakes)",
+                    value=bool(pp.get("fill_lakes", default_fill_lakes)),
+                )
+
+                st.divider()
+                st.markdown("**Coast**")
+                coast_smooth = st.toggle(
+                    "Smooth coastline",
+                    value=bool(pp.get("coast_smooth", default_coast_smooth)),
+                )
+                coast_radius = st.slider(
+                    "Smooth radius",
+                    min_value=0,
+                    max_value=12,
+                    value=int(pp.get("coast_radius", default_coast_radius)),
+                    step=1,
+                )
+                coast_strength = st.slider(
+                    "Smooth strength",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(pp.get("coast_strength", default_coast_strength)),
+                    step=0.05,
+                )
+                beach = st.toggle(
+                    "Beach deposit",
+                    value=bool(pp.get("beach", default_beach)),
+                )
+                beach_amount = st.slider(
+                    "Beach amount",
+                    min_value=0.0,
+                    max_value=0.1,
+                    value=float(pp.get("beach_amount", default_beach_amount)),
+                    step=0.005,
+                )
+
+            with tabs[2]:
+                st.markdown("**Erosion**")
+                erosion = st.toggle(
+                    "Thermal erosion",
+                    value=bool(pp.get("erosion", default_erosion)),
+                )
+                erosion_iter = st.slider(
+                    "Iterations",
+                    min_value=0,
+                    max_value=250,
+                    value=int(pp.get("erosion_iter", default_erosion_iter)),
+                    step=5,
+                )
+                erosion_talus = st.slider(
+                    "Talus",
+                    min_value=0.0,
+                    max_value=0.1,
+                    value=float(pp.get("erosion_talus", default_erosion_talus)),
+                    step=0.005,
+                )
+                erosion_strength = st.slider(
+                    "Strength",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(pp.get("erosion_strength", default_erosion_strength)),
+                    step=0.05,
+                )
+
+                st.divider()
+                hydraulic = st.toggle(
+                    "Hydraulic erosion",
+                    value=bool(pp.get("hydraulic", default_hydraulic)),
+                )
+                hyd_iter = st.slider(
+                    "Iterations (hydraulic)",
+                    min_value=0,
+                    max_value=250,
+                    value=int(pp.get("hyd_iter", default_hyd_iter)),
+                    step=5,
+                )
+                hyd_rain = st.slider(
+                    "Rain",
+                    min_value=0.0,
+                    max_value=0.05,
+                    value=float(pp.get("hyd_rain", default_hyd_rain)),
+                    step=0.001,
+                )
+                hyd_evap = st.slider(
+                    "Evaporation",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(pp.get("hyd_evap", default_hyd_evap)),
+                    step=0.05,
+                )
+                hyd_flow = st.slider(
+                    "Flow rate",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(pp.get("hyd_flow", default_hyd_flow)),
+                    step=0.05,
+                )
+                hyd_capacity = st.slider(
+                    "Sediment capacity",
+                    min_value=0.0,
+                    max_value=10.0,
+                    value=float(pp.get("hyd_capacity", default_hyd_capacity)),
+                    step=0.25,
+                )
+                hyd_erosion = st.slider(
+                    "Erode rate",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(pp.get("hyd_erosion", default_hyd_erosion)),
+                    step=0.05,
+                )
+                hyd_deposition = st.slider(
+                    "Deposit rate",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(pp.get("hyd_deposition", default_hyd_deposition)),
+                    step=0.05,
+                )
+
+            with tabs[3]:
+                st.markdown("**Movement**")
+                nav_step_px = st.slider(
+                    "Move step (px)",
+                    min_value=1.0,
+                    max_value=512.0,
+                    value=float(pp.get("nav_step_px", default_nav_step_px)),
+                    step=1.0,
+                )
+                chunk_size_px = st.slider(
+                    "Chunk size (px)",
+                    min_value=32,
+                    max_value=2048,
+                    value=int(pp.get("chunk_size_px", default_chunk_size_px)),
+                    step=32,
+                )
+                show_chunk_grid = st.toggle(
+                    "Show chunk grid",
+                    value=bool(pp.get("show_chunk_grid", default_show_chunk_grid)),
+                )
+                chunk_cache_n = st.slider(
+                    "Chunk cache (LRU)",
+                    min_value=0,
+                    max_value=256,
+                    value=int(pp.get("chunk_cache_n", default_chunk_cache_n)),
+                    step=4,
+                )
+                backend = st.selectbox(
+                    "Backend",
+                    ["Reference", "Fast"],
+                    index=0
+                    if str(pp.get("backend", default_backend)) == "Reference"
+                    else 1,
+                    help=(
+                        "Fast uses float32 internal arrays "
+                        "(approximate but deterministic)."
+                    ),
+                )
+
+                st.divider()
+                st.markdown("**Constraints**")
+                constraints = st.toggle(
+                    "Enable movement constraints",
+                    value=bool(pp.get("constraints", default_constraints)),
+                )
+                water_behavior = st.selectbox(
+                    "Water",
+                    ["Slow", "Block"],
+                    index=0
+                    if str(pp.get("water_behavior", default_water_behavior)) == "Slow"
+                    else 1,
+                )
+                water_slow = st.slider(
+                    "Water speed factor",
+                    min_value=0.05,
+                    max_value=1.0,
+                    value=float(pp.get("water_slow", default_water_slow)),
+                    step=0.05,
+                )
+                slope_block = st.slider(
+                    "Slope block threshold",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(pp.get("slope_block", default_slope_block)),
+                    step=0.05,
+                )
+                slope_cost = st.slider(
+                    "Slope cost",
+                    min_value=0.0,
+                    max_value=10.0,
+                    value=float(pp.get("slope_cost", default_slope_cost)),
+                    step=0.25,
+                )
+
+            with tabs[4]:
+                st.markdown("**View + extras**")
+                climate = st.toggle(
+                    "Climate biomes",
+                    value=bool(pp.get("climate", default_climate)),
+                )
+                climate_scale = st.slider(
+                    "Climate scale",
+                    min_value=20.0,
+                    max_value=2000.0,
+                    value=float(pp.get("climate_scale", default_climate_scale)),
+                    step=10.0,
+                )
+                climate_strength = st.slider(
+                    "Climate strength",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(pp.get("climate_strength", default_climate_strength)),
+                    step=0.05,
+                )
+                carto = st.toggle(
+                    "Cartographic mode",
+                    value=bool(pp.get("carto", default_cartographic)),
+                )
+                contour_interval = st.slider(
+                    "Contour interval",
+                    min_value=0.01,
+                    max_value=0.2,
+                    value=float(pp.get("contour_interval", default_contour_interval)),
+                    step=0.01,
+                )
+                contour_alpha = st.slider(
+                    "Contour alpha",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(pp.get("contour_alpha", default_contour_alpha)),
+                    step=0.05,
+                )
+
+                st.divider()
+                veg = st.toggle(
+                    "Vegetation",
+                    value=bool(pp.get("veg", default_veg)),
+                )
+                veg_cell = st.slider(
+                    "Vegetation spacing (px)",
+                    min_value=6,
+                    max_value=64,
+                    value=int(pp.get("veg_cell", default_veg_cell)),
+                    step=2,
+                )
+                veg_p = st.slider(
+                    "Vegetation density",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(pp.get("veg_p", default_veg_p)),
+                    step=0.05,
+                )
+                rocks = st.toggle(
+                    "Rocks",
+                    value=bool(pp.get("rocks", default_rocks)),
+                )
+
+                st.divider()
+                trails = st.toggle(
+                    "Trails (A*)",
+                    value=bool(pp.get("trails", default_trails)),
+                )
+                trail_tx = st.slider(
+                    "Trail target X (0..1)",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(pp.get("trail_tx", default_trail_tx)),
+                    step=0.01,
+                )
+                trail_ty = st.slider(
+                    "Trail target Y (0..1)",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(pp.get("trail_ty", default_trail_ty)),
+                    step=0.01,
+                )
+
+                st.divider()
+                tiles_grid = st.slider(
+                    "Tiles grid",
+                    min_value=1,
+                    max_value=8,
+                    value=int(pp.get("tiles_grid", default_tiles_grid)),
+                    step=1,
+                )
+                tiles_size = st.slider(
+                    "Tile size",
+                    min_value=64,
+                    max_value=512,
+                    value=int(pp.get("tiles_size", default_tiles_size)),
+                    step=32,
+                )
+                tiles_z = st.slider(
+                    "Tile zoom (label)",
+                    min_value=0,
+                    max_value=12,
+                    value=int(pp.get("tiles_z", default_tiles_z)),
+                    step=1,
+                )
+
+            apply_practical = st.form_submit_button(
+                "Apply",
+                type="primary",
+                use_container_width=True,
+            )
+
+        if apply_practical:
+            pp = {
+                "water_level": float(water_level),
+                "shore_width": float(shore_width),
+                "mountain_level": float(mountain_level),
+                "snowline": float(snowline),
+                "shade_az": float(shade_az),
+                "shade_alt": float(shade_alt),
+                "shade_strength": float(shade_strength),
+                "river_q": float(river_q),
+                "river_carve": bool(river_carve),
+                "river_depth": float(river_depth),
+                "fill_lakes": bool(fill_lakes),
+                "coast_smooth": bool(coast_smooth),
+                "coast_radius": int(coast_radius),
+                "coast_strength": float(coast_strength),
+                "beach": bool(beach),
+                "beach_amount": float(beach_amount),
+                "erosion": bool(erosion),
+                "erosion_iter": int(erosion_iter),
+                "erosion_talus": float(erosion_talus),
+                "erosion_strength": float(erosion_strength),
+                "hydraulic": bool(hydraulic),
+                "hyd_iter": int(hyd_iter),
+                "hyd_rain": float(hyd_rain),
+                "hyd_evap": float(hyd_evap),
+                "hyd_flow": float(hyd_flow),
+                "hyd_capacity": float(hyd_capacity),
+                "hyd_erosion": float(hyd_erosion),
+                "hyd_deposition": float(hyd_deposition),
+                "player_x": float(pp.get("player_x", default_player_x)),
+                "player_y": float(pp.get("player_y", default_player_y)),
+                "nav_step_px": float(nav_step_px),
+                "chunk_size_px": int(chunk_size_px),
+                "show_chunk_grid": bool(show_chunk_grid),
+                "chunk_cache_n": int(chunk_cache_n),
+                "backend": str(backend),
+                "constraints": bool(constraints),
+                "water_behavior": str(water_behavior),
+                "water_slow": float(water_slow),
+                "slope_block": float(slope_block),
+                "slope_cost": float(slope_cost),
+                "climate": bool(climate),
+                "climate_scale": float(climate_scale),
+                "climate_strength": float(climate_strength),
+                "veg": bool(veg),
+                "veg_cell": int(veg_cell),
+                "veg_p": float(veg_p),
+                "rocks": bool(rocks),
+                "trails": bool(trails),
+                "trail_tx": float(trail_tx),
+                "trail_ty": float(trail_ty),
+                "carto": bool(carto),
+                "contour_interval": float(contour_interval),
+                "contour_alpha": float(contour_alpha),
+                "tiles_grid": int(tiles_grid),
+                "tiles_size": int(tiles_size),
+                "tiles_z": int(tiles_z),
+            }
+            st.session_state["practical_params"] = pp
+
+            new = dict(params_for_url)
+            new.update(
+                {
+                    "water_level": str(float(pp["water_level"])),
+                    "shore_width": str(float(pp["shore_width"])),
+                    "mountain_level": str(float(pp["mountain_level"])),
+                    "snowline": str(float(pp["snowline"])),
+                    "shade_az": str(float(pp["shade_az"])),
+                    "shade_alt": str(float(pp["shade_alt"])),
+                    "shade_strength": str(float(pp["shade_strength"])),
+                    "river_q": str(float(pp["river_q"])),
+                    "river_carve": "1" if bool(pp["river_carve"]) else "0",
+                    "river_depth": str(float(pp["river_depth"])),
+                    "fill_lakes": "1" if bool(pp["fill_lakes"]) else "0",
+                    "coast_smooth": "1" if bool(pp["coast_smooth"]) else "0",
+                    "coast_radius": str(int(pp["coast_radius"])),
+                    "coast_strength": str(float(pp["coast_strength"])),
+                    "beach": "1" if bool(pp["beach"]) else "0",
+                    "beach_amount": str(float(pp["beach_amount"])),
+                    "erosion": "1" if bool(pp["erosion"]) else "0",
+                    "erosion_iter": str(int(pp["erosion_iter"])),
+                    "erosion_talus": str(float(pp["erosion_talus"])),
+                    "erosion_strength": str(float(pp["erosion_strength"])),
+                    "hydraulic": "1" if bool(pp["hydraulic"]) else "0",
+                    "hyd_iter": str(int(pp["hyd_iter"])),
+                    "hyd_rain": str(float(pp["hyd_rain"])),
+                    "hyd_evap": str(float(pp["hyd_evap"])),
+                    "hyd_flow": str(float(pp["hyd_flow"])),
+                    "hyd_capacity": str(float(pp["hyd_capacity"])),
+                    "hyd_erosion": str(float(pp["hyd_erosion"])),
+                    "hyd_deposition": str(float(pp["hyd_deposition"])),
+                    "nav_step_px": str(float(pp["nav_step_px"])),
+                    "chunk_size_px": str(int(pp["chunk_size_px"])),
+                    "show_chunk_grid": "1" if bool(pp["show_chunk_grid"]) else "0",
+                    "chunk_cache_n": str(int(pp["chunk_cache_n"])),
+                    "backend": str(pp["backend"]),
+                    "constraints": "1" if bool(pp["constraints"]) else "0",
+                    "water_behavior": str(pp["water_behavior"]),
+                    "water_slow": str(float(pp["water_slow"])),
+                    "slope_block": str(float(pp["slope_block"])),
+                    "slope_cost": str(float(pp["slope_cost"])),
+                    "climate": "1" if bool(pp["climate"]) else "0",
+                    "climate_scale": str(float(pp["climate_scale"])),
+                    "climate_strength": str(float(pp["climate_strength"])),
+                    "veg": "1" if bool(pp["veg"]) else "0",
+                    "veg_cell": str(int(pp["veg_cell"])),
+                    "veg_p": str(float(pp["veg_p"])),
+                    "rocks": "1" if bool(pp["rocks"]) else "0",
+                    "trails": "1" if bool(pp["trails"]) else "0",
+                    "trail_tx": str(float(pp["trail_tx"])),
+                    "trail_ty": str(float(pp["trail_ty"])),
+                    "carto": "1" if bool(pp["carto"]) else "0",
+                    "contour_interval": str(float(pp["contour_interval"])),
+                    "contour_alpha": str(float(pp["contour_alpha"])),
+                    "tiles_grid": str(int(pp["tiles_grid"])),
+                    "tiles_size": str(int(pp["tiles_size"])),
+                    "tiles_z": str(int(pp["tiles_z"])),
+                }
+            )
+            _set_query_params(new)
+            st.rerun()
+
+    pp = dict(st.session_state.get("practical_params", {}))
+    player_x = float(pp.get("player_x", default_player_x))
+    player_y = float(pp.get("player_y", default_player_y))
+    nav_step_px = float(pp.get("nav_step_px", default_nav_step_px))
+    chunk_size_px = int(pp.get("chunk_size_px", default_chunk_size_px))
+    show_chunk_grid = bool(pp.get("show_chunk_grid", default_show_chunk_grid))
+    chunk_cache_n = int(pp.get("chunk_cache_n", default_chunk_cache_n))
+    backend = str(pp.get("backend", default_backend))
+    step_world = nav_step_px / max(float(scale), 1e-9)
+
+    player_x = _snap_to_scale(float(player_x), scale=float(scale))
+    player_y = _snap_to_scale(float(player_y), scale=float(scale))
+    view_left = _snap_to_scale(
+        player_x - (float(width_render) / (2.0 * max(float(scale), 1e-9))),
+        scale=float(scale),
+    )
+    view_top = _snap_to_scale(
+        player_y - (float(height_render) / (2.0 * max(float(scale), 1e-9))),
+        scale=float(scale),
+    )
+
+    chunk_size_px = max(int(chunk_size_px), 32)
+    chunk_world = float(chunk_size_px) / max(float(scale), 1e-9)
+
+    view_w_world = float(int(width_render) - 1) / max(float(scale), 1e-9)
+    view_h_world = float(int(height_render) - 1) / max(float(scale), 1e-9)
+
+    cx0 = int(math.floor(view_left / chunk_world))
+    cy0 = int(math.floor(view_top / chunk_world))
+    cx1 = int(math.floor((view_left + view_w_world) / chunk_world))
+    cy1 = int(math.floor((view_top + view_h_world) / chunk_world))
+
+    seed_i = int(seed)
+    basis_s = str(basis)
+    grad2_s = str(grad2)
+    noise_variant_s = str(noise_variant)
+    warp_amp_f = float(warp_amp)
+    warp_scale_f = float(warp_scale)
+    warp_octaves_i = int(warp_octaves)
+    scale_f = float(scale)
+    octaves_i = int(octaves)
+    lacunarity_f = float(lacunarity)
+    persistence_f = float(persistence)
+    z_scale_f = float(z_scale)
+
+    water_level_f = float(pp.get("water_level", default_water_level))
+    shore_width_f = float(pp.get("shore_width", default_shore_width))
+    mountain_level_f = float(pp.get("mountain_level", default_mountain_level))
+    snowline_f = float(pp.get("snowline", default_snowline))
+    shade_az_f = float(pp.get("shade_az", default_shade_az))
+    shade_alt_f = float(pp.get("shade_alt", default_shade_alt))
+    shade_strength_f = float(pp.get("shade_strength", default_shade_strength))
+    river_q_f = float(pp.get("river_q", default_river_q))
+    river_carve_b = bool(pp.get("river_carve", default_river_carve))
+    river_depth_f = float(pp.get("river_depth", default_river_depth))
+    fill_lakes_b = bool(pp.get("fill_lakes", default_fill_lakes))
+    coast_smooth_b = bool(pp.get("coast_smooth", default_coast_smooth))
+    coast_radius_i = int(pp.get("coast_radius", default_coast_radius))
+    coast_strength_f = float(pp.get("coast_strength", default_coast_strength))
+    beach_b = bool(pp.get("beach", default_beach))
+    beach_amount_f = float(pp.get("beach_amount", default_beach_amount))
+    thermal_on_b = bool(pp.get("erosion", default_erosion))
+    thermal_iter_i = int(pp.get("erosion_iter", default_erosion_iter))
+    thermal_talus_f = float(pp.get("erosion_talus", default_erosion_talus))
+    thermal_strength_f = float(pp.get("erosion_strength", default_erosion_strength))
+    hydraulic_on_b = bool(pp.get("hydraulic", default_hydraulic))
+    hyd_iter_i = int(pp.get("hyd_iter", default_hyd_iter))
+    hyd_rain_f = float(pp.get("hyd_rain", default_hyd_rain))
+    hyd_evap_f = float(pp.get("hyd_evap", default_hyd_evap))
+    hyd_flow_f = float(pp.get("hyd_flow", default_hyd_flow))
+    hyd_capacity_f = float(pp.get("hyd_capacity", default_hyd_capacity))
+    hyd_erosion_f = float(pp.get("hyd_erosion", default_hyd_erosion))
+    hyd_deposition_f = float(pp.get("hyd_deposition", default_hyd_deposition))
+
+    pipeline_params: dict[str, object] = {
+        "seed": seed_i,
+        "basis": basis_s,
+        "grad2": grad2_s,
+        "noise_variant": noise_variant_s,
+        "warp_amp": warp_amp_f,
+        "warp_scale": warp_scale_f,
+        "warp_octaves": warp_octaves_i,
+        "scale": scale_f,
+        "octaves": octaves_i,
+        "lacunarity": lacunarity_f,
+        "persistence": persistence_f,
+        "z_scale": z_scale_f,
+        "water_level": water_level_f,
+        "shore_width": shore_width_f,
+        "mountain_level": mountain_level_f,
+        "snowline": snowline_f,
+        "shade_az": shade_az_f,
+        "shade_alt": shade_alt_f,
+        "shade_strength": shade_strength_f,
+        "river_q": river_q_f,
+        "river_carve": river_carve_b,
+        "river_depth": river_depth_f,
+        "fill_lakes": fill_lakes_b,
+        "coast_smooth": coast_smooth_b,
+        "coast_radius": coast_radius_i,
+        "coast_strength": coast_strength_f,
+        "beach": beach_b,
+        "beach_amount": beach_amount_f,
+        "thermal_on": thermal_on_b,
+        "thermal_iter": thermal_iter_i,
+        "thermal_talus": thermal_talus_f,
+        "thermal_strength": thermal_strength_f,
+        "hydraulic_on": hydraulic_on_b,
+        "hyd_iter": hyd_iter_i,
+        "hyd_rain": hyd_rain_f,
+        "hyd_evap": hyd_evap_f,
+        "hyd_flow": hyd_flow_f,
+        "hyd_capacity": hyd_capacity_f,
+        "hyd_erosion": hyd_erosion_f,
+        "hyd_deposition": hyd_deposition_f,
+        "backend": str(backend),
+    }
+    frozen = _freeze_params(pipeline_params)
+
+    def get_chunk(chunk_x: int, chunk_y: int) -> dict[str, object]:
+        key = (frozen, int(chunk_x), int(chunk_y), int(chunk_size_px))
+        cached = _chunk_cache_get(key)
+        if cached is not None:
+            return cast(dict[str, object], cached)
+
+        left = float(int(chunk_x)) * chunk_world
+        top = float(int(chunk_y)) * chunk_world
+        out = _practical_pipeline(
+            seed=int(seed_i),
+            basis=str(basis_s),
+            grad2=str(grad2_s),
+            noise_variant=str(noise_variant_s),
+            warp_amp=float(warp_amp_f),
+            warp_scale=float(warp_scale_f),
+            warp_octaves=int(warp_octaves_i),
+            scale=float(scale_f),
+            octaves=int(octaves_i),
+            lacunarity=float(lacunarity_f),
+            persistence=float(persistence_f),
+            width=int(chunk_size_px),
+            height=int(chunk_size_px),
+            view_left=float(left),
+            view_top=float(top),
+            z_scale=float(z_scale_f),
+            water_level=float(water_level_f),
+            shore_width=float(shore_width_f),
+            mountain_level=float(mountain_level_f),
+            snowline=float(snowline_f),
+            shade_az=float(shade_az_f),
+            shade_alt=float(shade_alt_f),
+            shade_strength=float(shade_strength_f),
+            river_q=float(river_q_f),
+            river_carve=bool(river_carve_b),
+            river_depth=float(river_depth_f),
+            fill_lakes=bool(fill_lakes_b),
+            coast_smooth=bool(coast_smooth_b),
+            coast_radius=int(coast_radius_i),
+            coast_strength=float(coast_strength_f),
+            beach=bool(beach_b),
+            beach_amount=float(beach_amount_f),
+            thermal_on=bool(thermal_on_b),
+            thermal_iter=int(thermal_iter_i),
+            thermal_talus=float(thermal_talus_f),
+            thermal_strength=float(thermal_strength_f),
+            hydraulic_on=bool(hydraulic_on_b),
+            hyd_iter=int(hyd_iter_i),
+            hyd_rain=float(hyd_rain_f),
+            hyd_evap=float(hyd_evap_f),
+            hyd_flow=float(hyd_flow_f),
+            hyd_capacity=float(hyd_capacity_f),
+            hyd_erosion=float(hyd_erosion_f),
+            hyd_deposition=float(hyd_deposition_f),
+            backend=str(backend),
+        )
+        _chunk_cache_put(key, out, max_items=int(chunk_cache_n))
+        return cast(dict[str, object], out)
+
+    def stitch(field: str) -> np.ndarray:
+        rows: list[np.ndarray] = []
+        for yy in range(cy0, cy1 + 1):
+            parts: list[np.ndarray] = []
+            for xx in range(cx0, cx1 + 1):
+                parts.append(np.asarray(get_chunk(xx, yy)[field]))
+            rows.append(np.concatenate(parts, axis=1))
+        return np.concatenate(rows, axis=0)
+
+    def stitch_opt(field: str) -> np.ndarray | None:
+        rows: list[np.ndarray] = []
+        any_present = False
+        for yy in range(cy0, cy1 + 1):
+            parts: list[np.ndarray] = []
+            for xx in range(cx0, cx1 + 1):
+                v = get_chunk(xx, yy).get(field)
+                if v is None:
+                    v = np.zeros((chunk_size_px, chunk_size_px), dtype=np.float64)
+                else:
+                    any_present = True
+                parts.append(np.asarray(v))
+            rows.append(np.concatenate(parts, axis=1))
+        return None if not any_present else np.concatenate(rows, axis=0)
+
+    full_base01 = stitch("base01")
+    full_terr01 = stitch("terr01")
+    full_terr_river01 = stitch("terr_river01")
+    full_s01 = stitch("s01")
+    full_shade01 = stitch("shade01")
+    full_lake_depth = stitch("lake_depth")
+    full_acc = stitch("acc")
+    full_rivers = stitch("rivers").astype(bool)
+    full_rgb = stitch("rgb")
+    full_biome = stitch("biome").astype(np.uint8)
+    full_hyd_water = stitch_opt("hyd_water")
+    full_hyd_sediment = stitch_opt("hyd_sediment")
+
+    x0 = int(round((view_left - (float(cx0) * chunk_world)) * float(scale)))
+    y0 = int(round((view_top - (float(cy0) * chunk_world)) * float(scale)))
+    x1 = x0 + int(width_render)
+    y1 = y0 + int(height_render)
+
+    base01 = np.asarray(full_base01[y0:y1, x0:x1], dtype=np.float64)
+    terr01 = np.asarray(full_terr01[y0:y1, x0:x1], dtype=np.float64)
+    terr_river01 = np.asarray(full_terr_river01[y0:y1, x0:x1], dtype=np.float64)
+    s01 = np.asarray(full_s01[y0:y1, x0:x1], dtype=np.float64)
+    shade01 = np.asarray(full_shade01[y0:y1, x0:x1], dtype=np.float64)
+    lake_depth = np.asarray(full_lake_depth[y0:y1, x0:x1], dtype=np.float64)
+    acc = np.asarray(full_acc[y0:y1, x0:x1], dtype=np.float64)
+    rivers = np.asarray(full_rivers[y0:y1, x0:x1]).astype(bool)
+    rgb = np.asarray(full_rgb[y0:y1, x0:x1], dtype=np.float64)
+    biome = np.asarray(full_biome[y0:y1, x0:x1], dtype=np.uint8)
+
+    hyd_water = (
+        None
+        if full_hyd_water is None
+        else np.asarray(full_hyd_water[y0:y1, x0:x1], dtype=np.float64)
+    )
+    hyd_sediment = (
+        None
+        if full_hyd_sediment is None
+        else np.asarray(full_hyd_sediment[y0:y1, x0:x1], dtype=np.float64)
+    )
+
+    seam_delta = np.zeros((int(height_render), int(width_render)), dtype=np.float64)
+    # Mark only chunk boundaries.
+    for k in range(1, int(cx1 - cx0 + 1)):
+        bx = int(k * chunk_size_px)
+        lx = bx - x0
+        if 1 <= lx < int(width_render):
+            seam_delta[:, lx] = np.abs(terr_river01[:, lx - 1] - terr_river01[:, lx])
+    for k in range(1, int(cy1 - cy0 + 1)):
+        by = int(k * chunk_size_px)
+        ly = by - y0
+        if 1 <= ly < int(height_render):
+            seam_delta[ly, :] = np.abs(terr_river01[ly - 1, :] - terr_river01[ly, :])
+
+    shore_level = min(
+        1.0,
+        float(pp.get("water_level", default_water_level))
+        + float(pp.get("shore_width", default_shore_width)),
+    )
+
+    # Used for hotkey-based movement constraints.
+    st.session_state["practical_last_height"] = terr_river01
+    st.session_state["practical_last_slope"] = s01
+
+    if "practical_overlays" not in st.session_state:
+        st.session_state["practical_overlays"] = {
+            "rivers": True,
+            "lakes": True,
+            "veg": True,
+            "rocks": True,
+            "trails": True,
+        }
+    overlays = cast(dict[str, bool], st.session_state["practical_overlays"])
+
+    rgb_vis = rgb
+    temp01 = None
+    moist01 = None
+    climate_biome = None
+    if bool(pp.get("climate", default_climate)):
+        temp01, moist01 = _climate_fields(
+            seed=int(seed),
+            basis=str(basis),
+            grad2=str(grad2),
+            width=int(width_render),
+            height=int(height_render),
+            climate_scale=float(pp.get("climate_scale", default_climate_scale)),
+            view_left=float(view_left),
+            view_top=float(view_top),
+        )
+        climate_biome = climate_biome_map(
+            terr_river01,
+            temp01,
+            moist01,
+            water_level=float(pp.get("water_level", default_water_level)),
+            snowline=float(pp.get("snowline", default_snowline)),
+        )
+        rgb_vis = apply_climate_palette(
+            rgb_vis,
+            climate_biome,
+            strength=float(pp.get("climate_strength", default_climate_strength)),
+        )
+
+    if bool(pp.get("carto", default_cartographic)):
+        cm = contour_mask(
+            terr_river01,
+            interval=float(pp.get("contour_interval", default_contour_interval)),
+        )
+        rgb_vis = apply_mask_overlay(
+            rgb_vis,
+            cm,
+            color=(0.05, 0.05, 0.05),
+            alpha=float(pp.get("contour_alpha", default_contour_alpha)),
+        )
+        water = terr_river01 < float(pp.get("water_level", default_water_level))
+        edge = np.zeros_like(water, dtype=bool)
+        edge[:, 1:] |= water[:, 1:] != water[:, :-1]
+        edge[1:, :] |= water[1:, :] != water[:-1, :]
+        rgb_vis = apply_mask_overlay(rgb_vis, edge, color=(0.02, 0.02, 0.02), alpha=0.6)
+
+    # Hydrology overlays: keep these after cartographic tint so they stay visible.
+    if bool(overlays.get("lakes", True)) and bool(
+        pp.get("fill_lakes", default_fill_lakes)
+    ):
+        lake_mask = np.asarray(lake_depth, dtype=np.float64) > 1e-12
+        rgb_vis = _rgb_overlay(
+            rgb_vis,
+            lake_mask,
+            color=(0.20, 0.62, 0.92),
+            alpha=0.22,
+        )
+
+    if bool(overlays.get("rivers", True)):
+        rgb_vis = _rgb_overlay(
+            rgb_vis,
+            rivers,
+            color=(0.05, 0.40, 0.72),
+            alpha=0.75,
+        )
+
+    veg_x = np.array([], dtype=np.float64)
+    veg_y = np.array([], dtype=np.float64)
+    rock_x = np.array([], dtype=np.float64)
+    rock_y = np.array([], dtype=np.float64)
+    if bool(pp.get("veg", default_veg)) or bool(pp.get("rocks", default_rocks)):
+        water = terr_river01 < float(pp.get("water_level", default_water_level))
+        land_mask = (~water) & (
+            terr_river01 < float(pp.get("mountain_level", default_mountain_level))
+        )
+        land_mask &= s01 < 0.65
+        mount_mask = terr_river01 >= float(
+            pp.get("mountain_level", default_mountain_level)
+        )
+        mount_mask |= s01 > 0.7
+
+        if bool(pp.get("veg", default_veg)):
+            veg_x, veg_y = jittered_points(
+                seed=int(seed) + 17,
+                height=int(height_render),
+                width=int(width_render),
+                cell=int(pp.get("veg_cell", default_veg_cell)),
+                probability=float(pp.get("veg_p", default_veg_p)),
+            )
+            veg_x, veg_y = filter_points_by_mask(veg_x, veg_y, land_mask)
+
+        if bool(pp.get("rocks", default_rocks)):
+            rock_x, rock_y = jittered_points(
+                seed=int(seed) + 33,
+                height=int(height_render),
+                width=int(width_render),
+                cell=max(int(pp.get("veg_cell", default_veg_cell)) + 6, 8),
+                probability=0.35,
+            )
+            rock_x, rock_y = filter_points_by_mask(rock_x, rock_y, mount_mask)
+
+    trail_path_xy = None
+    if bool(pp.get("trails", default_trails)):
+        H, W = terr_river01.shape
+        step = max(1, int(max(H, W) // 192))
+        cost = 1.0 + 3.0 * s01
+        water = terr_river01 < float(pp.get("water_level", default_water_level))
+        cost = np.where(water, np.inf, cost)
+        cost_ds = cost[::step, ::step]
+        sy = int((H - 1) // 2) // step
+        sx = int((W - 1) // 2) // step
+        gy = int(float(pp.get("trail_ty", default_trail_ty)) * float(H - 1)) // step
+        gx = int(float(pp.get("trail_tx", default_trail_tx)) * float(W - 1)) // step
+        path = astar_path(cost_ds, start=(sy, sx), goal=(gy, gx))
+        if path:
+            xs = [int(x * step) for (y, x) in path]
+            ys = [int(y * step) for (y, x) in path]
+            trail_path_xy = (xs, ys)
+
+    with right_col:
+        with st.form("practical_quick", border=False):
+            qc0, qc1, qc2, qc3, qc4 = st.columns(5)
+            with qc0:
+                qc_water = st.slider(
+                    "Water",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(pp.get("water_level", default_water_level)),
+                    step=0.01,
+                )
+            with qc1:
+                qc_mtn = st.slider(
+                    "Mountains",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(pp.get("mountain_level", default_mountain_level)),
+                    step=0.01,
+                )
+            with qc2:
+                qc_rivers = st.toggle(
+                    "Rivers",
+                    value=bool(pp.get("river_carve", default_river_carve)),
+                )
+            with qc3:
+                qc_erosion = st.toggle(
+                    "Erosion",
+                    value=bool(pp.get("erosion", default_erosion)),
+                )
+            with qc4:
+                qc_backend = st.selectbox(
+                    "Backend",
+                    ["Reference", "Fast"],
+                    index=0
+                    if str(pp.get("backend", default_backend)) == "Reference"
+                    else 1,
+                )
+
+            qc_apply = st.form_submit_button(
+                "Apply quick",
+                type="secondary",
+                use_container_width=True,
+            )
+
+        if qc_apply:
+            pp2 = dict(st.session_state.get("practical_params", {}))
+            pp2["water_level"] = float(qc_water)
+            pp2["mountain_level"] = float(qc_mtn)
+            pp2["river_carve"] = bool(qc_rivers)
+            pp2["erosion"] = bool(qc_erosion)
+            pp2["backend"] = str(qc_backend)
+            st.session_state["practical_params"] = pp2
+
+            new = dict(params_for_url)
+            new["water_level"] = str(float(pp2["water_level"]))
+            new["mountain_level"] = str(float(pp2["mountain_level"]))
+            new["river_carve"] = "1" if bool(pp2["river_carve"]) else "0"
+            new["erosion"] = "1" if bool(pp2["erosion"]) else "0"
+            new["backend"] = str(pp2["backend"])
+            _set_query_params(new)
+            st.rerun()
+
+        cache_state = _chunk_cache_state()
+        hits = int(cache_state.get("hits", 0))
+        misses = int(cache_state.get("misses", 0))
+        evictions = int(cache_state.get("evictions", 0))
+        size = len(cast(list[object], cache_state.get("order", [])))
+
+        s0, s1, s2, s3, s4 = st.columns(5)
+        s0.metric("chunk", f"({cx0},{cy0})..({cx1},{cy1})")
+        s1.metric("cache", str(size))
+        s2.metric("hits", str(hits))
+        s3.metric("misses", str(misses))
+        s4.metric("backend", str(backend))
+
+        if bool(debug_mode):
+            st.caption(f"LRU evictions: {evictions}")
+
+        with st.expander("Overlays", expanded=True):
+            oc0, oc1, oc2 = st.columns(3)
+            with oc0:
+                overlays["rivers"] = st.toggle(
+                    "Rivers",
+                    value=bool(overlays.get("rivers", True)),
+                    key="ov_rivers",
+                )
+                overlays["lakes"] = st.toggle(
+                    "Lakes",
+                    value=bool(overlays.get("lakes", True)),
+                    key="ov_lakes",
+                )
+            with oc1:
+                overlays["veg"] = st.toggle(
+                    "Vegetation",
+                    value=bool(overlays.get("veg", True)),
+                    key="ov_veg",
+                )
+                overlays["rocks"] = st.toggle(
+                    "Rocks",
+                    value=bool(overlays.get("rocks", True)),
+                    key="ov_rocks",
+                )
+            with oc2:
+                overlays["trails"] = st.toggle(
+                    "Trails",
+                    value=bool(overlays.get("trails", True)),
+                    key="ov_trails",
+                )
+
+            st.session_state["practical_overlays"] = overlays
+
+        tabs_right = st.tabs(["Viewport", "Hydrology", "Weathering", "Export"])
+
+    with tabs_right[0]:
+        st.markdown("**Terrain map**")
+
+        t2d, t3d = st.tabs(["2D", "3D"])
+        with t2d:
+            fig2 = _rgb_figure(
+                rgb_vis,
+                marker_xy=(
+                    float(width_render - 1) / 2.0,
+                    float(height_render - 1) / 2.0,
+                ),
+                marker_label="You",
+                height=480,
+            )
+
+            if bool(show_chunk_grid) and int(chunk_size_px) > 0:
+                cw = float(int(chunk_size_px)) / max(float(scale), 1e-9)
+                wx0 = float(view_left)
+                wx1 = float(view_left) + (
+                    float(width_render - 1) / max(float(scale), 1e-9)
+                )
+                wy0 = float(view_top)
+                wy1 = float(view_top) + (
+                    float(height_render - 1) / max(float(scale), 1e-9)
+                )
+
+                kx0 = int(math.floor(wx0 / cw))
+                kx1 = int(math.floor(wx1 / cw)) + 1
+                ky0 = int(math.floor(wy0 / cw))
+                ky1 = int(math.floor(wy1 / cw)) + 1
+
+                for k in range(kx0, kx1 + 1):
+                    xw = float(k) * cw
+                    xp = (xw - wx0) * float(scale)
+                    if 0.0 <= xp <= float(width_render - 1):
+                        fig2.add_shape(
+                            type="line",
+                            x0=xp,
+                            x1=xp,
+                            y0=0,
+                            y1=float(height_render - 1),
+                            line=dict(color="rgba(255,255,255,0.22)", width=1),
+                        )
+                for k in range(ky0, ky1 + 1):
+                    yw = float(k) * cw
+                    yp = (yw - wy0) * float(scale)
+                    if 0.0 <= yp <= float(height_render - 1):
+                        fig2.add_shape(
+                            type="line",
+                            x0=0,
+                            x1=float(width_render - 1),
+                            y0=yp,
+                            y1=yp,
+                            line=dict(color="rgba(255,255,255,0.22)", width=1),
+                        )
+
+            if veg_x.size and bool(overlays.get("veg", True)):
+                fig2.add_trace(
+                    go.Scatter(
+                        x=veg_x,
+                        y=veg_y,
+                        mode="markers",
+                        marker=dict(size=3, color="rgba(40,150,70,0.85)"),
+                        hoverinfo="skip",
+                        showlegend=False,
+                    )
+                )
+            if rock_x.size and bool(overlays.get("rocks", True)):
+                fig2.add_trace(
+                    go.Scatter(
+                        x=rock_x,
+                        y=rock_y,
+                        mode="markers",
+                        marker=dict(size=3, color="rgba(110,110,110,0.8)"),
+                        hoverinfo="skip",
+                        showlegend=False,
+                    )
+                )
+            if trail_path_xy is not None and bool(overlays.get("trails", True)):
+                xs, ys = trail_path_xy
+                fig2.add_trace(
+                    go.Scatter(
+                        x=xs,
+                        y=ys,
+                        mode="lines",
+                        line=dict(color="rgba(255,255,255,0.85)", width=2),
+                        hoverinfo="skip",
+                        showlegend=False,
+                    )
+                )
+
+            st.plotly_chart(fig2, width="stretch", key="practical_terrain_rgb")
+
+            if bool(debug_mode):
+                with st.expander("Inspector layers"):
+                    c0, c1 = st.columns(2)
+                    with c0:
+                        st.markdown("**Height (0..1)**")
+                        st.plotly_chart(
+                            _heatmap(
+                                terr_river01,
+                                colorscale="Earth",
+                                show_colorbar=True,
+                                height=420,
+                            ),
+                            width="stretch",
+                            key="practical_height",
+                        )
+                    with c1:
+                        st.markdown("**Slope (0..1)**")
+                        st.plotly_chart(
+                            _heatmap(
+                                s01,
+                                colorscale="Cividis",
+                                show_colorbar=True,
+                                height=420,
+                            ),
+                            width="stretch",
+                            key="practical_slope",
+                        )
+
+                    if bool(show_chunk_grid):
+                        st.markdown("**Seam delta (chunk edges)**")
+                        sd = np.asarray(seam_delta, dtype=np.float64)
+                        if float(np.max(sd)) > 0.0:
+                            sd = sd / float(np.max(sd))
+                        st.plotly_chart(
+                            _heatmap(
+                                sd,
+                                colorscale="Magma",
+                                show_colorbar=True,
+                                height=420,
+                            ),
+                            width="stretch",
+                            key="practical_seams",
+                        )
+
+                    if temp01 is not None and moist01 is not None:
+                        c2, c3 = st.columns(2)
+                        with c2:
+                            st.markdown("**Temperature**")
+                            st.plotly_chart(
+                                _heatmap(
+                                    np.asarray(temp01, dtype=np.float64),
+                                    colorscale="Turbo",
+                                    show_colorbar=True,
+                                    height=420,
+                                ),
+                                width="stretch",
+                                key="practical_temp",
+                            )
+                        with c3:
+                            st.markdown("**Moisture**")
+                            st.plotly_chart(
+                                _heatmap(
+                                    np.asarray(moist01, dtype=np.float64),
+                                    colorscale="Viridis",
+                                    show_colorbar=True,
+                                    height=420,
+                                ),
+                                width="stretch",
+                                key="practical_moist",
+                            )
+
+        with t3d:
+            h3 = np.asarray(terr_river01, dtype=np.float64)
+            H, W = h3.shape
+            cx = float(W - 1) / 2.0
+            cy = float(H - 1) / 2.0
+            cz = float(h3[int(H // 2), int(W // 2)] * float(z_scale))
+
+            wl = float(pp.get("water_level", default_water_level))
+
+            cs = [
+                [0.0, "rgb(5,30,70)"],
+                [max(0.0, min(1.0, wl)), "rgb(25,120,160)"],
+                [max(0.0, min(1.0, shore_level)), "rgb(195,180,130)"],
+                [
+                    max(
+                        0.0,
+                        min(
+                            1.0, float(pp.get("mountain_level", default_mountain_level))
+                        ),
+                    ),
+                    "rgb(80,80,75)",
+                ],
+                [
+                    max(0.0, min(1.0, float(pp.get("snowline", default_snowline)))),
+                    "rgb(235,240,250)",
+                ],
+                [1.0, "rgb(255,255,255)"],
+            ]
+
+            fig3 = go.Figure()
+            fig3.add_trace(
+                go.Surface(
+                    z=h3 * float(z_scale),
+                    surfacecolor=h3,
+                    colorscale=cs,
+                    showscale=False,
+                )
+            )
+            fig3.add_trace(
+                go.Surface(
+                    z=np.full_like(h3, wl * float(z_scale)),
+                    opacity=0.35,
+                    colorscale=[[0.0, "rgb(20,110,150)"], [1.0, "rgb(20,110,150)"]],
+                    showscale=False,
+                )
+            )
+            fig3.add_trace(
+                go.Scatter3d(
+                    x=[cx],
+                    y=[cy],
+                    z=[cz + 2.0],
+                    mode="markers",
+                    marker=dict(size=4, color="rgba(255,255,255,0.95)"),
+                    hoverinfo="skip",
+                    showlegend=False,
+                )
+            )
+            fig3.update_layout(
+                margin=dict(l=0, r=0, t=0, b=0),
+                height=520,
+                scene=dict(
+                    xaxis=dict(visible=False),
+                    yaxis=dict(visible=False),
+                    zaxis=dict(visible=False),
+                    aspectmode="data",
+                ),
+            )
+            st.plotly_chart(fig3, width="stretch", key="practical_terrain_3d")
+
+    with tabs_right[1]:
+        st.markdown("**Hydrology layers**")
+        loga = np.log1p(acc)
+        if float(np.max(loga)) > 0.0:
+            loga = loga / float(np.max(loga))
+        st.plotly_chart(
+            _heatmap(loga, colorscale="Viridis", show_colorbar=True, height=460),
+            width="stretch",
+            key="practical_accum",
+        )
+
+        if bool(pp.get("fill_lakes", default_fill_lakes)):
+            ld = np.asarray(lake_depth, dtype=np.float64)
+            if float(np.max(ld)) > 0.0:
+                ld = ld / float(np.max(ld))
+            st.plotly_chart(
+                _heatmap(ld, colorscale="IceFire", show_colorbar=True, height=460),
+                width="stretch",
+                key="practical_lake_depth",
+            )
+
+    with tabs_right[2]:
+        st.markdown("**Weathering (erosion before/after)**")
+        if bool(pp.get("erosion", False)) or bool(pp.get("hydraulic", False)):
+            diff = terr01 - base01
+            c0, c1, c2 = st.columns(3)
+            with c0:
+                st.markdown("**Before**")
+                st.plotly_chart(
+                    _heatmap(
+                        base01, colorscale="Earth", show_colorbar=False, height=340
+                    ),
+                    width="stretch",
+                    key="practical_before",
+                )
+            with c1:
+                st.markdown("**After**")
+                st.plotly_chart(
+                    _heatmap(
+                        terr01, colorscale="Earth", show_colorbar=False, height=340
+                    ),
+                    width="stretch",
+                    key="practical_after",
+                )
+            with c2:
+                st.markdown("**Delta**")
+                st.plotly_chart(
+                    _heatmap(
+                        diff, colorscale="IceFire", show_colorbar=False, height=340
+                    ),
+                    width="stretch",
+                    key="practical_delta",
+                )
+
+            if hyd_water is not None and hyd_sediment is not None:
+                c3, c4 = st.columns(2)
+                with c3:
+                    st.markdown("**Water**")
+                    w = np.asarray(hyd_water, dtype=np.float64)
+                    if float(np.max(w)) > 0.0:
+                        w = w / float(np.max(w))
+                    st.plotly_chart(
+                        _heatmap(
+                            w, colorscale="Cividis", show_colorbar=False, height=320
+                        ),
+                        width="stretch",
+                        key="practical_water",
+                    )
+                with c4:
+                    st.markdown("**Sediment**")
+                    s = np.asarray(hyd_sediment, dtype=np.float64)
+                    if float(np.max(s)) > 0.0:
+                        s = s / float(np.max(s))
+                    st.plotly_chart(
+                        _heatmap(
+                            s, colorscale="Viridis", show_colorbar=False, height=320
+                        ),
+                        width="stretch",
+                        key="practical_sediment",
+                    )
+
+            st.divider()
+            st.markdown("**Animation**")
+            max_frames = st.slider(
+                "Max frames",
+                min_value=10,
+                max_value=120,
+                value=60,
+                step=5,
+                key="anim_max_frames",
+            )
+            fps = st.slider(
+                "FPS",
+                min_value=2,
+                max_value=30,
+                value=12,
+                step=1,
+                key="anim_fps",
+            )
+
+            modes = []
+            if bool(pp.get("erosion", False)):
+                modes.append("Thermal")
+            if bool(pp.get("hydraulic", False)):
+                modes.append("Hydraulic")
+            mode = st.selectbox("Mode", modes, key="anim_mode")
+
+            if mode == "Thermal":
+                it = int(pp.get("erosion_iter", default_erosion_iter))
+                every = max(1, int(math.ceil(max(it, 1) / float(max_frames))))
+                frames = thermal_erosion_frames(
+                    base01,
+                    iterations=it,
+                    talus=float(pp.get("erosion_talus", default_erosion_talus)),
+                    strength=float(
+                        pp.get("erosion_strength", default_erosion_strength)
+                    ),
+                    every=every,
+                )
+                idx = st.slider(
+                    "Frame",
+                    min_value=0,
+                    max_value=int(frames.shape[0] - 1),
+                    value=0,
+                    step=1,
+                    key="anim_frame",
+                )
+                st.caption(f"stride={every} iters, frames={int(frames.shape[0])}")
+                ph = st.empty()
+                ph.plotly_chart(
+                    _heatmap(frames[int(idx)], colorscale="Earth", show_colorbar=False),
+                    width="stretch",
+                    key="thermal_anim_frame",
+                )
+                cols = st.columns(2)
+                play = cols[0].button(
+                    "Play", use_container_width=True, key="play_thermal"
+                )
+                if play:
+                    for j in range(int(frames.shape[0])):
+                        ph.plotly_chart(
+                            _heatmap(
+                                frames[int(j)],
+                                colorscale="Earth",
+                                show_colorbar=False,
+                            ),
+                            width="stretch",
+                        )
+                        time.sleep(1.0 / max(float(fps), 1.0))
+
+            else:
+                it = int(pp.get("hyd_iter", default_hyd_iter))
+                every = max(1, int(math.ceil(max(it, 1) / float(max_frames))))
+                hf, wf, sf = hydraulic_erosion_frames(
+                    thermal_erosion(
+                        base01,
+                        iterations=int(pp.get("erosion_iter", default_erosion_iter))
+                        if bool(pp.get("erosion", False))
+                        else 0,
+                        talus=float(pp.get("erosion_talus", default_erosion_talus)),
+                        strength=float(
+                            pp.get("erosion_strength", default_erosion_strength)
+                        ),
+                    ),
+                    iterations=it,
+                    rain=float(pp.get("hyd_rain", default_hyd_rain)),
+                    evaporation=float(pp.get("hyd_evap", default_hyd_evap)),
+                    flow_rate=float(pp.get("hyd_flow", default_hyd_flow)),
+                    capacity=float(pp.get("hyd_capacity", default_hyd_capacity)),
+                    erosion=float(pp.get("hyd_erosion", default_hyd_erosion)),
+                    deposition=float(pp.get("hyd_deposition", default_hyd_deposition)),
+                    every=every,
+                )
+                idx = st.slider(
+                    "Frame",
+                    min_value=0,
+                    max_value=int(hf.shape[0] - 1),
+                    value=0,
+                    step=1,
+                    key="anim_frame_h",
+                )
+                st.caption(f"stride={every} iters, frames={int(hf.shape[0])}")
+                ph = st.empty()
+                c0, c1, c2 = st.columns(3)
+                with c0:
+                    ph0 = st.empty()
+                with c1:
+                    ph1 = st.empty()
+                with c2:
+                    ph2 = st.empty()
+
+                def _render_h(i: int) -> None:
+                    h = hf[int(i)]
+                    w = wf[int(i)]
+                    s = sf[int(i)]
+                    if float(np.max(w)) > 0.0:
+                        w = w / float(np.max(w))
+                    if float(np.max(s)) > 0.0:
+                        s = s / float(np.max(s))
+                    ph0.plotly_chart(
+                        _heatmap(h, colorscale="Earth", show_colorbar=False),
+                        width="stretch",
+                    )
+                    ph1.plotly_chart(
+                        _heatmap(w, colorscale="Cividis", show_colorbar=False),
+                        width="stretch",
+                    )
+                    ph2.plotly_chart(
+                        _heatmap(s, colorscale="Viridis", show_colorbar=False),
+                        width="stretch",
+                    )
+
+                _render_h(int(idx))
+
+                play = st.button("Play", use_container_width=True, key="play_hyd")
+                if play:
+                    for j in range(int(hf.shape[0])):
+                        _render_h(int(j))
+                        time.sleep(1.0 / max(float(fps), 1.0))
+        else:
+            st.info(
+                "Enable thermal and/or hydraulic erosion in Practical settings "
+                "to see before/after."
+            )
+
+    with tabs_right[3]:
+        st.markdown("**Export**")
+
+        st.markdown("**Navigation**")
+        nav_caption = (
+            f"Player: x={player_x:.3f}, y={player_y:.3f} "
+            f"(step={step_world:.3f} world units)"
+        )
+        st.caption(nav_caption)
+
+        if bool(debug_mode):
+            with st.expander("Navigator logs"):
+                if st.button(
+                    "Clear logs", use_container_width=True, key="clear_nav_logs"
+                ):
+                    st.session_state["nav_log"] = []
+                    st.rerun()
+                log = list(st.session_state.get("nav_log", []))
+                if not log:
+                    st.caption("No navigator events yet.")
+                else:
+                    st.json(log[-25:])
+
+        if int(chunk_size_px) > 0:
+            cw = float(int(chunk_size_px)) / max(float(scale), 1e-9)
+            cx = int(math.floor(float(player_x) / cw))
+            cy = int(math.floor(float(player_y) / cw))
+            st.caption(f"Chunk: ({cx}, {cy})  size={int(chunk_size_px)}px")
+
+            with st.form("chunk_form", border=False):
+                c0, c1, c2 = st.columns([1, 1, 1])
+                with c0:
+                    chunk_x = st.number_input(
+                        "Chunk x",
+                        value=int(cx),
+                        step=1,
+                        key="chunk_x",
+                    )
+                with c1:
+                    chunk_y = st.number_input(
+                        "Chunk y",
+                        value=int(cy),
+                        step=1,
+                        key="chunk_y",
+                    )
+                with c2:
+                    go_chunk = st.form_submit_button(
+                        "Go to chunk",
+                        type="secondary",
+                        use_container_width=True,
+                    )
+
+            if go_chunk:
+                _nav_log(
+                    "go_chunk",
+                    {
+                        "from": {"x": float(player_x), "y": float(player_y)},
+                        "to_chunk": {"x": int(chunk_x), "y": int(chunk_y)},
+                    },
+                )
+                player_x = (float(int(chunk_x)) + 0.5) * cw
+                player_y = (float(int(chunk_y)) + 0.5) * cw
+                pp["player_x"] = float(player_x)
+                pp["player_y"] = float(player_y)
+                st.session_state["practical_params"] = pp
+
+                view_left = float(player_x) - (
+                    float(width_render) / (2.0 * max(float(scale), 1e-9))
+                )
+                view_top = float(player_y) - (
+                    float(height_render) / (2.0 * max(float(scale), 1e-9))
+                )
+                new = dict(params_for_url)
+                new["player_x"] = str(float(player_x))
+                new["player_y"] = str(float(player_y))
+                new["offset_x"] = str(float(view_left))
+                new["offset_y"] = str(float(view_top))
+                _set_query_params(new)
+                st.rerun()
+
+        with st.expander("Export region"):
+            st.download_button(
+                "Download terrain preview (PNG)",
+                data=_rgb_to_png_bytes(rgb_vis),
+                file_name="terrain.png",
+                mime="image/png",
+            )
+            st.download_button(
+                "Download heightmap (NPY)",
+                data=array_to_npy_bytes(terr_river01),
+                file_name="heightmap.npy",
+                mime="application/octet-stream",
+            )
+            st.download_button(
+                "Download biome map (NPY)",
+                data=array_to_npy_bytes(biome),
+                file_name="biome.npy",
+                mime="application/octet-stream",
+            )
+            st.download_button(
+                "Download river mask (NPY)",
+                data=array_to_npy_bytes(rivers.astype(np.uint8)),
+                file_name="rivers.npy",
+                mime="application/octet-stream",
+            )
+            meta = {
+                "seed": int(seed),
+                "noise": str(noise_variant),
+                "basis": str(basis),
+                "grad2": str(grad2),
+                "scale": float(scale),
+                "octaves": int(octaves),
+                "lacunarity": float(lacunarity),
+                "persistence": float(persistence),
+                "player_x": float(player_x),
+                "player_y": float(player_y),
+                "view_left": float(view_left),
+                "view_top": float(view_top),
+                "water_level": float(pp.get("water_level", default_water_level)),
+                "shore_level": float(shore_level),
+                "mountain_level": float(
+                    pp.get("mountain_level", default_mountain_level)
+                ),
+                "snowline": float(pp.get("snowline", default_snowline)),
+            }
+            st.download_button(
+                "Download metadata (JSON)",
+                data=json.dumps(meta, indent=2).encode("utf-8"),
+                file_name="region.json",
+                mime="application/json",
+            )
+
+            st.download_button(
+                "Download tileset (ZIP)",
+                data=tiles_zip_from_rgb(
+                    rgb_vis,
+                    z=int(pp.get("tiles_z", default_tiles_z)),
+                    grid=int(pp.get("tiles_grid", default_tiles_grid)),
+                    tile_size=int(pp.get("tiles_size", default_tiles_size)),
+                ),
+                file_name="tiles.zip",
+                mime="application/zip",
+            )
+
+            st.divider()
+            st.markdown("**Export chunk region (k x k chunks)**")
+            with st.form("chunk_export_form", border=False):
+                export_k = st.slider(
+                    "k",
+                    min_value=1,
+                    max_value=8,
+                    value=3,
+                    step=1,
+                    help="Exports a stitched region aligned to chunk boundaries.",
+                    key="export_k",
+                )
+                do_export = st.form_submit_button(
+                    "Build chunk export",
+                    type="primary",
+                    use_container_width=True,
+                )
+
+            if do_export:
+                if float(chunk_world) <= 0.0:
+                    st.error("Invalid chunk size.")
+                else:
+                    cx = int(math.floor(float(player_x) / float(chunk_world)))
+                    cy = int(math.floor(float(player_y) / float(chunk_world)))
+                    half = int(export_k) // 2
+                    x0c = int(cx - half)
+                    y0c = int(cy - half)
+                    x1c = int(x0c + int(export_k) - 1)
+                    y1c = int(y0c + int(export_k) - 1)
+
+                    def stitch_region(field: str) -> np.ndarray:
+                        rows: list[np.ndarray] = []
+                        for yy in range(y0c, y1c + 1):
+                            parts: list[np.ndarray] = []
+                            for xx in range(x0c, x1c + 1):
+                                parts.append(np.asarray(get_chunk(xx, yy)[field]))
+                            rows.append(np.concatenate(parts, axis=1))
+                        return np.concatenate(rows, axis=0)
+
+                    region_rgb = stitch_region("rgb")
+                    region_height = stitch_region("terr_river01")
+                    region_biome = stitch_region("biome").astype(np.uint8)
+                    region_rivers = stitch_region("rivers").astype(np.uint8)
+
+                    meta2 = dict(meta)
+                    meta2.update(
+                        {
+                            "export": {
+                                "kind": "chunk_region",
+                                "chunk_size_px": int(chunk_size_px),
+                                "chunk_world": float(chunk_world),
+                                "k": int(export_k),
+                                "chunks": {
+                                    "x0": int(x0c),
+                                    "x1": int(x1c),
+                                    "y0": int(y0c),
+                                    "y1": int(y1c),
+                                },
+                                "origin": {
+                                    "left": float(x0c) * float(chunk_world),
+                                    "top": float(y0c) * float(chunk_world),
+                                },
+                            }
+                        }
+                    )
+
+                    st.download_button(
+                        "Download chunk region (PNG)",
+                        data=_rgb_to_png_bytes(region_rgb),
+                        file_name="chunk_region.png",
+                        mime="image/png",
+                    )
+                    st.download_button(
+                        "Download chunk heightmap (NPY)",
+                        data=array_to_npy_bytes(region_height),
+                        file_name="chunk_height.npy",
+                        mime="application/octet-stream",
+                    )
+                    st.download_button(
+                        "Download chunk biome (NPY)",
+                        data=array_to_npy_bytes(region_biome),
+                        file_name="chunk_biome.npy",
+                        mime="application/octet-stream",
+                    )
+                    st.download_button(
+                        "Download chunk rivers (NPY)",
+                        data=array_to_npy_bytes(region_rivers),
+                        file_name="chunk_rivers.npy",
+                        mime="application/octet-stream",
+                    )
+                    st.download_button(
+                        "Download chunk metadata (JSON)",
+                        data=json.dumps(meta2, indent=2).encode("utf-8"),
+                        file_name="chunk_region.json",
+                        mime="application/json",
+                    )
+
+        c0, c1, c2, c3 = st.columns(4)
+        move_dx = 0.0
+        move_dy = 0.0
+        if c0.button("Left (A)", use_container_width=True, key="nav_left"):
+            move_dx -= 1.0
+        if c1.button("Right (D)", use_container_width=True, key="nav_right"):
+            move_dx += 1.0
+        if c2.button("Up (W)", use_container_width=True, key="nav_up"):
+            move_dy -= 1.0
+        if c3.button("Down (S)", use_container_width=True, key="nav_down"):
+            move_dy += 1.0
+
+        if move_dx != 0.0 or move_dy != 0.0:
+            factor = 1.0
+            blocked = False
+            reason = ""
+
+            if bool(pp.get("constraints", default_constraints)):
+                cx = int((int(width_render) - 1) // 2)
+                cy = int((int(height_render) - 1) // 2)
+                tx = int(cx + round(move_dx * float(nav_step_px)))
+                ty = int(cy + round(move_dy * float(nav_step_px)))
+
+                if 0 <= tx < int(width_render) and 0 <= ty < int(height_render):
+                    h = float(terr_river01[ty, tx])
+                    sl = float(s01[ty, tx])
+                    water = h < float(pp.get("water_level", default_water_level))
+
+                    if sl >= float(pp.get("slope_block", default_slope_block)):
+                        blocked = True
+                        reason = "too steep"
+                    elif (
+                        water
+                        and str(pp.get("water_behavior", default_water_behavior))
+                        == "Block"
+                    ):
+                        blocked = True
+                        reason = "water"
+                    else:
+                        sc = float(pp.get("slope_cost", default_slope_cost))
+                        if sc > 0.0:
+                            factor /= 1.0 + sc * sl
+                        if (
+                            water
+                            and str(pp.get("water_behavior", default_water_behavior))
+                            == "Slow"
+                        ):
+                            factor *= float(pp.get("water_slow", default_water_slow))
+
+            if blocked:
+                _nav_log(
+                    "move_blocked",
+                    {
+                        "reason": str(reason),
+                        "pos": {"x": float(player_x), "y": float(player_y)},
+                    },
+                )
+                st.warning(f"Movement blocked: {reason}.")
+            else:
+                _nav_log(
+                    "move",
+                    {
+                        "from": {"x": float(player_x), "y": float(player_y)},
+                        "delta": {
+                            "dx": float(move_dx),
+                            "dy": float(move_dy),
+                            "factor": float(factor),
+                        },
+                    },
+                )
+                player_x += move_dx * step_world * factor
+                player_y += move_dy * step_world * factor
+
+        with st.form("teleport_form", border=False):
+            c4, c5 = st.columns(2)
+            with c4:
+                px_new = st.number_input(
+                    "Teleport x",
+                    value=float(player_x),
+                    step=float(step_world),
+                    key="teleport_x",
+                )
+            with c5:
+                py_new = st.number_input(
+                    "Teleport y",
+                    value=float(player_y),
+                    step=float(step_world),
+                    key="teleport_y",
+                )
+            teleport = st.form_submit_button(
+                "Teleport",
+                type="primary",
+                use_container_width=True,
+            )
+
+        if teleport:
+            _nav_log(
+                "teleport",
+                {
+                    "from": {"x": float(player_x), "y": float(player_y)},
+                    "to": {"x": float(px_new), "y": float(py_new)},
+                },
+            )
+            player_x = float(px_new)
+            player_y = float(py_new)
+
+            pp["player_x"] = float(player_x)
+            pp["player_y"] = float(player_y)
+            st.session_state["practical_params"] = pp
+
+            view_left = float(player_x) - (
+                float(width_render) / (2.0 * max(float(scale), 1e-9))
+            )
+            view_top = float(player_y) - (
+                float(height_render) / (2.0 * max(float(scale), 1e-9))
+            )
+            new = dict(params_for_url)
+            new["player_x"] = str(float(player_x))
+            new["player_y"] = str(float(player_y))
+            new["offset_x"] = str(float(view_left))
+            new["offset_y"] = str(float(view_top))
+            _set_query_params(new)
+            st.rerun()
+
+        old_x = float(pp.get("player_x", default_player_x))
+        old_y = float(pp.get("player_y", default_player_y))
+        moved = (abs(player_x - old_x) > 1e-12) or (abs(player_y - old_y) > 1e-12)
+        if moved:
+            pp["player_x"] = float(player_x)
+            pp["player_y"] = float(player_y)
+            st.session_state["practical_params"] = pp
+
+            view_left = float(player_x) - (
+                float(width_render) / (2.0 * max(float(scale), 1e-9))
+            )
+            view_top = float(player_y) - (
+                float(height_render) / (2.0 * max(float(scale), 1e-9))
+            )
+            new = dict(params_for_url)
+            new["player_x"] = str(float(player_x))
+            new["player_y"] = str(float(player_y))
+            new["offset_x"] = str(float(view_left))
+            new["offset_y"] = str(float(view_top))
+            _set_query_params(new)
+            st.rerun()
+
 else:
     st.subheader("Learn: Perlin Noise (2D)")
     st.caption("Pick a point inside a lattice cell and inspect each intermediate step.")
